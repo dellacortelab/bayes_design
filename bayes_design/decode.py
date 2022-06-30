@@ -7,6 +7,8 @@ import random
 import numpy as np
 import torch
 
+from .utils import AMINO_ACID_ORDER
+
 ####################################################################################
 # Decode Orders
 ####################################################################################
@@ -109,9 +111,17 @@ def greedy_decode(prob_model, struct, seq, decode_order):
 def beam_decode(prob_model, struct, seq, decode_order, n_beams):
     top_sequences = [[list(seq), 0.0]]
     for j, decode_idx in enumerate(decode_order):
+        print("j:", j)
         all_candidates = []
         for (current_seq, score) in top_sequences:
-            probs = prob_model(seq=''.join(current_seq), struct=struct, decode_order=decode_order, token_to_decode=decode_idx).tolist()
+            probs = prob_model(seq=[''.join(current_seq)], struct=struct, decode_order=decode_order, token_to_decode=decode_idx)[0].tolist()
+            # If token is fixed, select the fixed token, regardless of probability
+            #print(probs)
+            #import pdb; pdb.set_trace()
+            if seq[decode_idx] != '-':
+                candidate = [current_seq, score + log(probs[AMINO_ACID_ORDER.index(seq[decode_idx])])]
+                all_candidates.append(candidate)
+                continue
             # Ignore the last token, 'X', to which we assign 0 probability
             for i, prob in enumerate(probs[:-1]):
                 candidate_seq = current_seq.copy()
@@ -123,7 +133,43 @@ def beam_decode(prob_model, struct, seq, decode_order, n_beams):
         # Select n_beams best
         top_sequences = ordered[:n_beams]
     top_sequences = [(''.join(seq), score) for (seq, score) in top_sequences]
-    return top_sequences
+    return top_sequences[0]
+
+def beam_decode_fast(prob_model, struct, seq, decode_order, n_beams):
+    L = len(seq)
+    top_candidates = [[list(seq), 0.0]]
+    for j, decode_idx in enumerate(decode_order):
+        print("j:", j)
+        top_sequences = [seq for seq, score in top_candidates]
+        # top_sequences: n_beams x L
+        probs = prob_model(seq=[''.join(seq) for seq in top_sequences], struct=struct, decode_order=decode_order, token_to_decode=decode_idx)
+        # probs: n_beams x 21
+        top_scores = torch.tensor([score for seq, score in top_candidates]).to(probs.device)
+        # top_scores: n_beams
+        proposed_sequences = np.array(top_sequences)
+        proposed_sequences = np.repeat(proposed_sequences[:, np.newaxis, :], len(AMINO_ACID_ORDER), axis=1)
+        proposed_sequences[:, np.arange(len(AMINO_ACID_ORDER)), decode_idx] = np.array(list(AMINO_ACID_ORDER))
+        # proposed_sequences: n_beams x 21 x L
+
+        if seq[decode_idx] != '-':
+            fixed_aa_idx = AMINO_ACID_ORDER.index(seq[decode_idx])
+            probs = probs[:, fixed_aa_idx].unsqueeze(-1)
+            # probs: n_beams x 1
+            proposed_sequences = proposed_sequences[:, fixed_aa_idx, :][:, np.newaxis, :]
+            # proposed_sequences: n_beams x 1 x L
+
+        summed_probs = top_scores[:, None] + torch.log(probs)
+        # summed_probs: n_beams x 21
+        orig_shape = summed_probs.shape
+        summed_probs = summed_probs.reshape(-1)
+        proposed_sequences = proposed_sequences.reshape(-1, proposed_sequences.shape[-1])
+        top_k = torch.topk(summed_probs, k=min(n_beams, len(summed_probs)))
+        top_probs = top_k.values.tolist()
+        top_sequences = [proposed_sequences[i].tolist() for i in top_k.indices]
+        top_candidates = [list(x) for x in zip(top_sequences, top_probs)]
+
+    top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
+    return top_candidates[0]
 
 def sample_decode(struct_to_seq_model, seq_model, struct, seq, decode_order):
     current_seq = seq
@@ -179,4 +225,4 @@ def plot_decode(struct_to_seq_model, seq_model, struct, seq, decode_order):
     return current_seq
 
 decode_order_dict = {'proximity':get_proximity_decode_order, 'reverse_proximity':get_reverse_proximity_decode_order, 'random':get_random_decode_order, 'n_to_c':get_n_to_c_decode_order}
-decode_algorithm_dict = {'greedy':greedy_decode, 'beam':beam_decode, 'sample':sample_decode, 'random':random_decode, 'compare':compare_decode, 'plot':plot_decode} 
+decode_algorithm_dict = {'greedy':greedy_decode, 'beam_fast':beam_decode_fast, 'beam':beam_decode, 'sample':sample_decode, 'random':random_decode, 'compare':compare_decode, 'plot':plot_decode} 

@@ -5,12 +5,13 @@ from protein_mpnn_utils import parse_PDB, StructureDatasetPDB
 
 AMINO_ACID_ORDER = 'ACDEFGHIKLMNPQRSTVWYX'
 
-def get_protein(pdb_code='6MRR'):
+def get_protein(pdb_code='6MRR', structures_dir='/data/structures'):
     """Get a sequence in string format and 4-atom protein structure in L x 4 x 3
     tensor format (with atoms in N CA CB C order).
     """
-    os.system(f"wget -qnc https://files.rcsb.org/view/{pdb_code}.pdb")
-    pdb_path = f"{pdb_code}.pdb"
+    pdb_path = os.path.join(structures_dir, pdb_code + '.pdb')
+    if not os.path.exists(pdb_path):
+        os.system(f"cd {structures_dir} && wget -qnc https://files.rcsb.org/view/{pdb_code}.pdb")
     chain_list = ['A']
     pdb_dict_list = parse_PDB(pdb_path, input_chain_list=chain_list)
     dataset_valid = StructureDatasetPDB(pdb_dict_list, max_length=20000)
