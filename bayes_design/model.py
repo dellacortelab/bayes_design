@@ -64,7 +64,7 @@ class ProteinMPNNWrapperOld(nn.Module):
                 token to decode next. If not specified, this function will predict the
                 first token indicated with a dash
         Returns:
-            probs ((N x 21) torch.Tensor): a vector of probabilities for the next
+            probs ((N x 20) torch.Tensor): a vector of probabilities for the next
                 token
         """
         L = len(seq)
@@ -91,7 +91,7 @@ class ProteinMPNNWrapperOld(nn.Module):
         return probs[0, token_to_decode]
 
 class XLNetWrapperOld(nn.Module):
-    def __init__(self, temperature=None):
+    def __init__(self):
         super().__init__()
         self.device = torch.device("cuda:0" if (torch.cuda.is_available()) else "cpu")
         self.tokenizer = XLNetTokenizer.from_pretrained('Rostlab/prot_xlnet', do_lower_case=False)
@@ -114,7 +114,7 @@ class XLNetWrapperOld(nn.Module):
                 token to decode next. If not specified, this function will predict the
                 first token indicated with dash (-)
         Returns:
-            probs ((21) torch.Tensor): a vector of probabilities for the next
+            probs ((20) torch.Tensor): a vector of probabilities for the next
                 token
         """
         # Determine which indices should be masked for prediction
@@ -152,7 +152,7 @@ class XLNetWrapperOld(nn.Module):
         return index_corrected_probs
 
 class XLNetWrapper(nn.Module):
-    def __init__(self, temperature=None, device=None):
+    def __init__(self, device=None):
         super().__init__()
         if device is not None:
             self.device = device
@@ -177,15 +177,14 @@ class XLNetWrapper(nn.Module):
             decode_order (len L list): list of the order of indices to decode.
                 This determines the values in the permutation mask. Each index 
                 attends to all indices that occur previously in the decoding_order.
-            token_to_decode (int): index in the range [0, L-1] indicating which 
-                token to decode next. If not specified, this function will predict the
-                first token indicated with dash (-)
+            token_to_decode (int or len N tensor): index in the range [0, L-1] indicating which 
+                token to predict.
         Returns:
-            probs ((21) torch.Tensor): a vector of probabilities for the next
+            probs ((20) torch.Tensor): a vector of probabilities for the next
                 token
         """
         N = len(seq)
-
+        
         # Determine which indices should be masked for prediction
         masked_indices = [i for i, char in enumerate(seq[0]) if char == '-']
         masked_indices.append(token_to_decode)
@@ -209,8 +208,12 @@ class XLNetWrapper(nn.Module):
             perm_mask[:, idx, decode_order[:i]] = 0.0
 
         # Indicate which token to decode
-        target_mapping = torch.zeros((N, 1, L), dtype=torch.float).to(self.device)  # Shape [batch_size, 1, seq_length]
-        target_mapping[:, 0, token_to_decode] = 1.0  # Our first prediction will be the indicated token
+        target_mapping = torch.zeros((N, 1, L), dtype=torch.float).to(self.device)  # Shape [batch_size, number_of_tokens_to_predict, seq_length]
+        # N x 21
+        if hasattr(token_to_decode, '__len__'):
+            target_mapping[range(len(token_to_decode)), 0, token_to_decode] = 1.0
+        else:
+            target_mapping[:, 0, token_to_decode] = 1.0
 
         # Get probabilities
         with torch.no_grad():
@@ -219,7 +222,8 @@ class XLNetWrapper(nn.Module):
             probs = torch.nn.functional.softmax(logits, dim=-1)
             index_corrected_probs = probs[:, 0, self.canonical_idx_to_xlnet_idx]
 
-        return index_corrected_probs
+        # Ignore the last entry, corresponding to 'X'
+        return index_corrected_probs[:, :-1]
 
 class TransformerXLU100Wrapper(nn.Module):
     def __init__(self):
@@ -236,7 +240,7 @@ class ProGenWrapper(nn.Module):
         pass
         
 class ProteinMPNNWrapper(nn.Module):
-    def __init__(self, temperature=1.0,  device=None):
+    def __init__(self, device=None):
         super().__init__()
         if device is not None:
             self.device = device
@@ -244,7 +248,6 @@ class ProteinMPNNWrapper(nn.Module):
             self.device = torch.device("cuda:0")
         else:
             self.device = torch.device('cpu')
-        self.temperature = temperature
 
         #v_48_010=version with 48 edges 0.10A noise
         model_name = "v_48_030"
@@ -265,6 +268,8 @@ class ProteinMPNNWrapper(nn.Module):
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.eval()
         print("Model loaded")
+        #print(self.model.state_dict().keys())
+        #import pdb; pdb.set_trace()
     
     def forward(self, seq, struct, decode_order, token_to_decode):
         """Accept an amino acid sequence and protein structure 
@@ -281,7 +286,7 @@ class ProteinMPNNWrapper(nn.Module):
                 token to decode next. If not specified, this function will predict the
                 first token indicated with a dash
         Returns:
-            probs ((N x 21) torch.Tensor): a vector of probabilities for the next
+            probs ((N x 20) torch.Tensor): a vector of probabilities for the next
                 token
         """
         N = len(seq)
@@ -290,24 +295,38 @@ class ProteinMPNNWrapper(nn.Module):
         # Convert amino acid character to index
         seq = [re.sub(r"-", "X", s) for s in seq]
         seq = torch.tensor([[AMINO_ACID_ORDER.index(aa) for aa in s] for s in seq]).to(self.device)
+        struct = struct.expand(N, *struct.shape).to(self.device)
         with torch.no_grad():
             # Default values
             mask = torch.ones(N, L).float().to(self.device)
             chain_M = torch.ones(N, L).float().to(self.device)
-            chain_M_pos = torch.ones(N, L).float().to(self.device)
             chain_encoding_all = torch.ones(N, L).float().to(self.device)
             residue_idx = torch.arange(L).expand(N, L).to(self.device)
-            bias_AAs_np = np.zeros(len(AMINO_ACID_ORDER))
-            bias_by_res = torch.zeros([N, L, len(AMINO_ACID_ORDER)]).to(self.device)
+
             # randn determines the decoding order. The indices in the randn vector with the lowest values will be decoded first
             randn = torch.argsort(torch.tensor(decode_order)).to(self.device)
-            # Predict tokens except 'X'
-            omit_AAs_np = np.array([AA in ['X'] for AA in AMINO_ACID_ORDER]).astype(np.float32)
+            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, randn=randn, use_input_decoding_order=True, decoding_order=torch.tensor(decode_order).expand(N, L).to(self.device))
+            probs = torch.exp(log_probs)
+            # N x L x 20
+        
+        if hasattr(token_to_decode, '__len__'):
+            return probs[range(len(token_to_decode)), token_to_decode][:, :-1]
+            # N x 20
+        else:
+            # Ignore the last entry, corresponding to 'X'
+            return probs[:, token_to_decode][:, :-1]
+            # N x 20
 
-            out = self.model.sample(X=struct.expand(N, *struct.shape).to(self.device), randn=randn, S_true=seq, chain_mask=chain_M, chain_encoding_all=chain_encoding_all, residue_idx=residue_idx, mask=mask, chain_M_pos=chain_M_pos, bias_AAs_np=bias_AAs_np, omit_AAs_np=omit_AAs_np, bias_by_res=bias_by_res, temperature=self.temperature)
-            probs = out['probs']
-        # Return the probabilities for th 0th chain and the 0th residue
-        return probs[:, token_to_decode]
+        #     # Required for sampling
+        #     chain_M_pos = torch.ones(N, L).float().to(self.device)
+        #     bias_AAs_np = np.zeros(len(AMINO_ACID_ORDER))
+        #     bias_by_res = torch.zeros([N, L, len(AMINO_ACID_ORDER)]).to(self.device)
+        #     # Predict tokens except 'X'
+        #     omit_AAs_np = np.array([AA in ['X'] for AA in AMINO_ACID_ORDER]).astype(np.float32)
+        #     out = self.model.sample(X=struct, randn=randn, S_true=seq, chain_mask=chain_M, chain_encoding_all=chain_encoding_all, residue_idx=residue_idx, mask=mask, chain_M_pos=chain_M_pos, bias_AAs_np=bias_AAs_np, omit_AAs_np=omit_AAs_np, bias_by_res=bias_by_res)
+        #     probs = out['probs']
+        # # Return the probabilities for th 0th chain and the 0th residue
+        # return probs[:, token_to_decode]
 
 class ESMIF1Wrapper(nn.Module):
     def __init__(self):
@@ -330,9 +349,8 @@ class BayesStructModel(nn.Module):
         self.seq_struct_model = ProteinMPNNWrapper(**kwargs)
 
     def forward(self, seq, struct, decode_order, token_to_decode):
-        # Ignore the last entry, corresponding to 'X'
-        p_seq = self.seq_model(seq=seq, decode_order=decode_order, token_to_decode=token_to_decode)[:, :-1]
-        p_seq_struct = self.seq_struct_model(seq=seq, struct=struct, decode_order=decode_order, token_to_decode=token_to_decode)[:, :-1]
+        p_seq = self.seq_model(seq=seq, decode_order=decode_order, token_to_decode=token_to_decode)
+        p_seq_struct = self.seq_struct_model(seq=seq, struct=struct, decode_order=decode_order, token_to_decode=token_to_decode)
         p_struct_seq = (p_seq_struct / p_seq)
         # Normalize probabilities
         p_struct_seq = p_struct_seq / p_struct_seq.sum(dim=-1).unsqueeze(-1)

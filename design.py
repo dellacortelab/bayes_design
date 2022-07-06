@@ -11,10 +11,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--model_name', help="The model to use for protein sequence design", choices=['bayes_struct', 'protein_mpnn', 'protein_mpnn_batch', 'xlnet'], default='bayes_struct')
 parser.add_argument('--protein_id', help="The PDB id of the protein to redesign", default='6MRR')
 parser.add_argument('--decode_order', help="The order to decode masked parts of the sequence", choices=['proximity', 'reverse_proximity', 'random', 'n_to_c'], default='proximity')
-parser.add_argument('--decode_algorithm', help="The algorithm used to decode masked parts of the sequence", choices=['greedy', 'beam', 'sample', 'random', 'compare', 'plot', 'beam_fast'], default='beam')
+parser.add_argument('--decode_algorithm', help="The algorithm used to decode masked parts of the sequence", choices=['greedy', 'beam', 'sample', 'random', 'compare', 'plot', 'beam_fast', 'beam_medium'], default='beam')
 parser.add_argument('--fixed_positions', help="The beginnings and ends of residue ranges (includes endpoints [], 1-indexed) to remain fixed and not predicted, separated by spaces", nargs='*', type=int, default=[])
 parser.add_argument('--n_beams', help="The number of beams, if using beam search decoding", type=int, default=16)
-parser.add_argument('--temperature', help='The sampling temperature for ProteinMPNN. TODO: Rewrite the sampler for a single step w/o sampling', type=float, default=1.0)
 subparsers = parser.add_subparsers(help="Whether to run an experiment instead of using the base design functionality")
 experiment_parser = subparsers.add_parser('experiment')
 experiment_parser.add_argument('--name', help='The name of the experiment to run')
@@ -24,7 +23,7 @@ def example_design(args):
     
     device = torch.device("cuda:1" if (torch.cuda.is_available()) else "cpu")
 
-    prob_model = model_dict[args.model_name](device=device, temperature=args.temperature)
+    prob_model = model_dict[args.model_name](device=device)
 
     # Get sequence and structure of protein to redesign
     seq, struct = get_protein(args.protein_id)
