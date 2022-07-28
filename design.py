@@ -8,10 +8,10 @@ from bayes_design.utils import get_protein
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--model_name', help="The model to use for protein sequence design", choices=['bayes_struct', 'protein_mpnn', 'protein_mpnn_batch', 'xlnet'], default='bayes_struct')
+parser.add_argument('--model_name', help="The model to use for protein sequence design", choices=list(model_dict.keys()), default='bayes_struct')
 parser.add_argument('--protein_id', help="The PDB id of the protein to redesign", default='6MRR')
-parser.add_argument('--decode_order', help="The order to decode masked parts of the sequence", choices=['proximity', 'reverse_proximity', 'random', 'n_to_c'], default='proximity')
-parser.add_argument('--decode_algorithm', help="The algorithm used to decode masked parts of the sequence", choices=['greedy', 'beam', 'sample', 'random', 'compare', 'plot', 'beam_fast', 'beam_medium'], default='beam')
+parser.add_argument('--decode_order', help="The order to decode masked parts of the sequence", choices=list(decode_order_dict.keys()), default='proximity')
+parser.add_argument('--decode_algorithm', help="The algorithm used to decode masked parts of the sequence", choices=list(decode_algorithm_dict.keys()), default='beam')
 parser.add_argument('--fixed_positions', help="The beginnings and ends of residue ranges (includes endpoints [], 1-indexed) to remain fixed and not predicted, separated by spaces", nargs='*', type=int, default=[])
 parser.add_argument('--n_beams', help="The number of beams, if using beam search decoding", type=int, default=16)
 subparsers = parser.add_subparsers(help="Whether to run an experiment instead of using the base design functionality")

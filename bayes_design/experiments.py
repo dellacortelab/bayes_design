@@ -2,10 +2,12 @@
 import torch
 import numpy as np
 import math
+import os
+from PIL import Image
 
 from bayes_design.decode import decode_order_dict, decode_algorithm_dict
-from bayes_design.model import model_dict
-from bayes_design.utils import get_protein, AMINO_ACID_ORDER
+from bayes_design.model import model_dict, TrRosettaWrapper
+from bayes_design.utils import get_protein, get_cb_coordinates, compute_distogram, AMINO_ACID_ORDER
 
 
 def compare_seq_probs(args):
@@ -43,52 +45,45 @@ def compare_seq_probs(args):
         print(f"Log Prob: {log_prob}, Sequence: {seq}")
 
 
-def compare_forward_prob(args):                                                        
-                                                                                 
-    device = torch.device("cuda:0" if (torch.cuda.is_available()) else "cpu")    
-                                                                                 
-    model_1 = model_dict['protein_mpnn'](device=device) 
-    model_2 = model_dict['bayes_struct'](device=device)                      
-                                                                                 
-    # Get sequence and structure of protein to redesign                          
-    seq, struct = get_protein(args.protein_id)                                   
-                                                                                 
-    # Masked positions are the positions to predict/design                       
-    # Default to predict all positions                                           
-    masked_positions = np.ones(len(seq))                                         
-    # Preserve fixed positions                                                   
-    #for i in range(len(args.fixed_positions), step=2):                           
-    #    fixed_range_start = args.fixed_positions[i]                              
-    #    fixed_range_end = args.fixed_positions[i+1]                              
-    #    masked_positions[fixed_range_start:fixed_range_end] = 0.                 
-    masked_seq = ''.join(['-' if mask else char for char, mask in zip(seq, masked_positions)])
-                                                                                 
-    # Decode order defines the order in which the masked positions are predicted 
-    decode_order = decode_order_dict['proximity_decode_order'](masked_seq)              
-                                                                                 
-    # The decoding algorithm determines how the sequence is decoded              
-    designed_seq_1 = decode_algorithm_dict['beam'](prob_model=model_1, struct=struct, seq=masked_seq, decode_order=decode_order, n_beams=16)
-    designed_seq_2 = decode_algorithm_dict['beam'](prob_model=model_2, struct=struct, seq=masked_seq, decode_order=decode_order, n_beams=16)
-    
-    forward_struct_model = TrRosettaWrapper()
-    distogram_orig = forward_struct_model(seq)
-    distogram_1 = forward_struct_model(designed_seq_1)
-    distogram_2 = forward_struct_model(designed_seq_2)
-    
-    correct_bins = torch.argmax(distogram_org, dim=-1)
-    log_prob_orig = torch.sum(torch.log(distogram_orig[:, :, correct_bins]))
-    log_prob_1 = torch.sum(torch.log(distogram_1[:, :, correct_bins]))
-    log_prob_2 = torch.sum(torch.log(distogram_2[:, :, correct_bins]))
-    print("Original Sequence", seq)
-    print("Prob:", prob_orig)
-    print("Designed Sequence ProteinMPNN", designed_seq_1)
-    print("Prob:", prob_1)
-    print("Designed Sequence BayesDesign", designed_seq_2)
-    print("Prob:", prob_2)
+def compare_struct_probs(args):
 
-    return seq, masked_seq, designed_seq  
+    device = torch.device("cuda:1" if (torch.cuda.is_available()) else "cpu")
+    # Get true distances
+    cb_coordinates_true = get_cb_coordinates(args.protein_id)
+    cb_distogram_true = compute_distogram(cb_coordinates_true)
+    cb_distogram_true_idx = torch.argmax(cb_distogram_true, dim=-1)
 
+    from PIL import Image
+    img = cb_distogram_true_idx.float().cpu().detach().numpy()
+    img_1 = np.round(img/img.max()*255)
+    im = Image.fromarray(img_1)
+    im.convert('RGB').save(os.path.join(args.results_dir, f'{args.protein_id}_trrosetta.jpg'))
+    forward_struct_model = TrRosettaWrapper(device=device)
 
+    # Get trRosetta-predicted distogram for designed sequences
+    for seq in args.sequences:
+        seq_id = args.protein_id + '_' + seq[:10]
+        cb_distogram_predicted = torch.tensor(forward_struct_model(seq, seq_id=seq_id))
+        # Edit predicted distogram to correspond to a more sensible, ordered layout, with not-in-contact next to the largest distances
+        cb_distogram_predicted = torch.cat((cb_distogram_predicted[..., 1:], cb_distogram_predicted[..., :1]), dim=-1)
+        # Make the diagonal entries correspond to the lowest distance bin, not the not-in-contact bin
+        cb_distogram_predicted[:, :, 0].fill_diagonal_(1)
+        for i in range(1, 36):
+            cb_distogram_predicted[:, :, i].fill_diagonal_(0)
+        
+        # Get probability of true structure under predicted distograms.
+        probs = torch.gather(input=cb_distogram_predicted.cpu(), dim=-1, index=cb_distogram_true_idx.unsqueeze(-1))
+        log_probs = torch.log(probs)
+        log_prob = torch.sum(log_probs)
+
+        print("Sequence", seq)
+        print("Prob:", log_prob)
+
+        img = torch.argmax(cb_distogram_predicted, dim=-1).float().cpu().detach().numpy()
+        img_1 = np.round(img/img.max()*255)
+        im = Image.fromarray(img_1)
+        im.convert('RGB').save(os.path.join(args.results_dir, f'{seq_id}_trrosetta.jpg'))
+        
 #  Experiment: 
 # Take a structure with a known sequence. Use p(seq|struct) and p(seq|struct)/p(seq) 
 # to design new sequences for the structure. Compare the log-probability and stability

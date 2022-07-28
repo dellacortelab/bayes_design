@@ -9,10 +9,13 @@ import numpy as np
 import torch
 import random
 import os.path
+from pathlib import Path
+import subprocess
 from transformers import XLNetTokenizer, XLNetLMHeadModel
 from protein_mpnn_utils import ProteinMPNN
 from tr_rosetta_pytorch import trRosettaNetwork
 from tr_rosetta_pytorch.utils import preprocess
+from tr_rosetta_pytorch.cli import DEFAULT_MODEL_PATH
 
 from .utils import AMINO_ACID_ORDER, get_protein
 
@@ -292,6 +295,7 @@ class ProteinMPNNWrapper(nn.Module):
         N = len(seq)
         L = len(seq[0])
 
+        assert L == struct.shape[0], "Sequence length must match the number of residues in the provided structure"
         # Convert amino acid character to index
         seq = [re.sub(r"-", "X", s) for s in seq]
         seq = torch.tensor([[AMINO_ACID_ORDER.index(aa) for aa in s] for s in seq]).to(self.device)
@@ -357,7 +361,7 @@ class BayesStructModel(nn.Module):
         return p_struct_seq
 
 class TrRosettaWrapper():
-    def __init__(self, seq_file='tmp.txt', msa_file='msa_tmp.txt', database='/data/uniref30', device=None):
+    def __init__(self, data_location='/data/msa', database='/data/uniref30/UniRef30_2022_02', device=None):
 
         if device is not None:
             self.device = device
@@ -365,30 +369,51 @@ class TrRosettaWrapper():
             self.device = torch.device("cuda:0")
         else:
             self.device = torch.device('cpu')
+        
+        model_files = [*Path(DEFAULT_MODEL_PATH).glob('*.pt')]
+        self.models = []
+        for model_file in model_files[:1]:
+            trrosetta = trRosettaNetwork(
+                filters = 64,
+                kernel = 3,
+                num_layers = 61
+            ).to(self.device)
+            trrosetta.load_state_dict(torch.load(model_file, map_location=self.device))
+            trrosetta.eval()
+            self.models.append(trrosetta)
 
-        self.trrosetta = trRosettaNetwork(
-            filters = 64,
-            kernel = 3,
-            num_layers = 61
-        ).cuda()
-        self.seq_file = seq_file
-        self.msa_file = msa_file
+        self.data_location = data_location
+        os.makedirs(self.data_location, exist_ok=True)
+
         self.database = database
 
-    def __call__(self, seq):
+    def __call__(self, seq, seq_id):
         """Pass a sequence through the trRosetta model and return the distogram
         Args:
             seq (str): a space-separated string representing the amino acid sequence
         Returns:
             distance ((L x L x 37) torch.Tensor): a distogram representing distance bin probabilities
         """
+        seq_path = os.path.join(self.data_location, f'{seq_id}.txt')
+        seq_msa_path = os.path.join(self.data_location, f'{seq_id}_msa.txt')
         # Make a fasta file with the sequence
-        with open(self.seq_file, 'w') as f:
+        with open(seq_path, 'w') as f:
             f.write('>\n' + ''.join(seq.split()))
         # Get an MSA for the sequence
-        os.system(f'hhblits -i {self.seq_file} -oa3m {self.msa_file} -d {self.database}')
-        x = preprocess(self.msa_file)
-        theta, phi, distance, omega = model(x).squeeze()
+        if not os.path.exists(seq_msa_path):
+            out = subprocess.run(['/root/hh-suite/bin/hhblits', '-i', f'{seq_path}', '-oa3m', f'{seq_msa_path}', '-d', f'{self.database}'])
+        x = preprocess(seq_msa_path).to(self.device)
+        outputs = []
+        with torch.no_grad():
+            for model in self.models:
+                output = model(x)
+                outputs.append(output)
+            averaged_outputs = [torch.stack(model_output).mean(dim=0).cpu().numpy().squeeze(0).transpose(1,2,0) for model_output in zip(*outputs)]
+            # prob_theta, prob_phi, prob_distance, prob_omega
+            output_dict = dict(zip(['theta', 'phi', 'dist', 'omega'], averaged_outputs))
+            distance = output_dict['dist']
+            distance = distance.squeeze()
+
         return distance
 
 def test_xlnet_wrapper():
@@ -414,4 +439,4 @@ def test_protein_mpnn_wrapper():
     decoding_order = np.arange(len(seq)).tolist()
     out_probs = mpnn(seq=seq, struct=struct, decoding_order=decoding_order, token_to_decode=given_characters_up_to)
 
-model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_struct':BayesStructModel, 'trRosetta':TrRosettaWrapper}
+model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesStructModel, 'trRosetta':TrRosettaWrapper}
