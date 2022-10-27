@@ -4,49 +4,27 @@ import numpy as np
 import math
 import os
 from PIL import Image
+from matplotlib import pyplot as plt
+import matplotlib
 
 from bayes_design.decode import decode_order_dict, decode_algorithm_dict
+from bayes_design.evaluate import metric_dict
 from bayes_design.model import model_dict, TrRosettaWrapper
-from bayes_design.utils import get_protein, get_cb_coordinates, compute_distogram, AMINO_ACID_ORDER
+from bayes_design.utils import get_fixed_position_mask, get_protein, get_cb_coordinates, compute_distogram, AMINO_ACID_ORDER
 
-
-def compare_seq_probs(args):
+def compare_seq_metric(args):
+    seq, structure = get_protein(args.protein_id)
     device = torch.device("cuda:1" if (torch.cuda.is_available()) else "cpu")
-    prob_model = model_dict[args.model_name](device=device)
-
-    _, structure = get_protein(args.protein_id)
+    fixed_position_mask = get_fixed_position_mask(fixed_position_list=args.fixed_positions, seq_len=len(seq))
     
+    prob_model = model_dict[args.model_name](device=device)
     for seq in args.sequences:
-        masked_positions = np.ones(len(seq))
-        # Preserve fixed positions
-        for i in range(0, len(args.fixed_positions), 2):
-            # -1 because residues are 1-indexed
-            fixed_range_start = args.fixed_positions[i] - 1
-            # -1 because residues are 1-indexed and +1 because we are including the endpoint
-            fixed_range_end = args.fixed_positions[i+1]
-            masked_positions[fixed_range_start:fixed_range_end] = 0.
-        masked_seq = ''.join(['-' if mask else char for char, mask in zip(seq, masked_positions)])
-        n_masked_positions = int(masked_positions.sum())
-        n_unmasked_positions = len(seq) - n_masked_positions
-
-        # Decode order defines the order in which the masked positions are predicted
-        decode_order = decode_order_dict[args.decode_order](masked_seq)
-        token_to_decode = torch.tensor(decode_order[n_unmasked_positions:])
-        input_seqs = [seq]*n_masked_positions
-
-        probs = prob_model(seq=input_seqs, struct=structure, decode_order=decode_order, token_to_decode=token_to_decode)
-        print(probs.shape)
-        log_prob = 0
-        for i, idx in enumerate(token_to_decode):
-            aa = seq[idx]
-            seq_idx = AMINO_ACID_ORDER.index(aa)
-            log_prob += math.log(probs[i, seq_idx])
-        
-        print(f"Log Prob: {log_prob}, Sequence: {seq}")
-
+        metric = metric_dict[args.metric](seq=seq, prob_model=prob_model, decode_order=args.decode_order, structure=structure, fixed_position_mask=fixed_position_mask)
+        print(f'Metric {args.metric}:', metric)
 
 def compare_struct_probs(args):
-
+    """Return log p(struct=x|seq=s) for the given sequence and structure using trRosetta.
+    """
     device = torch.device("cuda:1" if (torch.cuda.is_available()) else "cpu")
     # Get true distances
     cb_coordinates_true = get_cb_coordinates(args.protein_id)
@@ -84,6 +62,61 @@ def compare_struct_probs(args):
         im = Image.fromarray(img_1)
         im.convert('RGB').save(os.path.join(args.results_dir, f'{seq_id}_trrosetta.jpg'))
         
+def viz_probs(args):
+    """Compare p(seq|struct)/p(seq), p(seq), and p(seq|struct), across all residues, highlighting top 1 in blue, second in green, third in red
+    """
+    device = torch.device("cuda:1" if (torch.cuda.is_available()) else "cpu")
+    protein_mpnn = model_dict['protein_mpnn'](device=device)
+    xlnet = model_dict['xlnet'](device=device)
+
+    seq, structure = get_protein(args.protein_id)
+    
+    fixed_position_mask = get_fixed_position_mask(fixed_position_list=args.fixed_positions, seq_len=len(seq))
+    masked_seq = ''.join(['-' if not fixed else char for char, fixed in zip(seq, fixed_position_mask)])
+    
+    # Decode order defines the order in which the masked positions are predicted
+    decode_order = decode_order_dict[args.decode_order](masked_seq)
+
+    seq, probs = decode_algorithm_dict['compare'](struct_to_seq_model=protein_mpnn, seq_model=xlnet, struct=structure, seq=masked_seq, decode_order=decode_order, bayes_balance_factor=args.bayes_balance_factor)
+    
+    n_figures = 5
+    # Plot 5 evenly-spaced probabilities
+    spacing = len(args.sequence) // (n_figures - 1)
+    indices = np.arange(0, len(args.sequence), spacing)
+
+    fig, ax = plt.subplots(n_figures, figsize=(23, 7))
+
+    def color_top_scores(plot, probs):
+        # Color top three scores
+        first, second, third = np.argsort(probs)[::-1][:3]
+        plot.patches[first].set_facecolor('blue')
+        plot.patches[second].set_facecolor('green')
+        plot.patches[third].set_facecolor('red')
+        
+        
+    labels = list(AMINO_ACID_ORDER[:-1])
+    x = np.arange(len(labels))  # the label locations
+    width = 0.1
+    for i, idx in enumerate(indices):
+        ax[i].set_xticks(x, labels=labels)
+        p_seq_struct, p_seq, p_struct_seq = probs[idx]
+        p_seq_struct, p_seq, p_struct_seq = p_seq_struct[0].detach().cpu().numpy(), p_seq[0].detach().cpu().numpy(), p_struct_seq[0].detach().cpu().numpy()
+        rects_1 = ax[i].bar(x - 1.5*width, p_seq_struct, width, color='orange')
+        color_top_scores(plot=rects_1, probs=p_seq_struct)
+        rects_2 = ax[i].bar(x, p_seq, width, color='orange')
+        color_top_scores(plot=rects_2, probs=p_seq)
+        rects_3 = ax[i].bar(x + 1.5*width, p_struct_seq, width, color='orange')
+        color_top_scores(plot=rects_3, probs=p_struct_seq)
+    
+    patch_1 = matplotlib.patches.Patch(color='orange', label='$left: p(seq|struct)$')
+    patch_2 = matplotlib.patches.Patch(color='orange', label='$middle: p(seq)$')
+    patch_3 = matplotlib.patches.Patch(color='orange', label='$right: p(struct|seq)$')
+    plt.gcf().legend(handles=[patch_1, patch_2, patch_3], loc='upper right')
+
+    plt.yscale('log')
+    plt.tight_layout()
+    plt.savefig(args.results_path)
+
 #  Experiment: 
 # Take a structure with a known sequence. Use p(seq|struct) and p(seq|struct)/p(seq) 
 # to design new sequences for the structure. Compare the log-probability and stability

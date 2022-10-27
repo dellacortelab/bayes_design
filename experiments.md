@@ -193,3 +193,40 @@ PPPPAAPTPEELREAVARAVREAVREVFRPPPGDPTPPELWERLAEEAARAAEEAVRRVLEERLPEPLPPEELREAIARA
 Sequence Stats:
 - BayesDesign LogP: -501.2846077182429 `python3 experiment.py compare_seq_probs --protein_id dn47_cut2 --model_name bayes_design --decode_order n_to_c --sequences PPPPAAPTPEELREAVARAVREAVREVFRPPPGDPTPPELWERLAEEAARAAEEAVRRVLEERLPEPLPPEELREAIARAVREAVRRVLEGEPGDPIPEELRERLAEEAARAAREAVEEVLRRLLPPPPPA`
 - ProteinMPNN LogP: -91.01211402479034 `python3 experiment.py compare_seq_probs --protein_id dn47_cut2 --model_name protein_mpnn --decode_order n_to_c --sequences PPPPAAPTPEELREAVARAVREAVREVFRPPPGDPTPPELWERLAEEAARAAEEAVRRVLEERLPEPLPPEELREAIARAVREAVRRVLEGEPGDPIPEELRERLAEEAARAAREAVEEVLRRLLPPPPPA`
+
+## Other experiments
+
+### Visualizing distribution shift
+```
+python3 experiment.py viz_probs --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --sequence KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG --results_path ./results/probs_viz_KLPP
+```
+```
+python3 experiment.py viz_probs --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --sequence KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG --results_path ./results/probs_viz_KLPP_bayes_002 --bayes_balance_factor .002
+```
+### Evaluate perplexity
+```
+python3 experiment.py compare_seq_metric --protein_id 1PIN --fixed_positions 34 34 --model_name protein_mpnn --metric perplexity --sequences KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG
+```
+
+python3 design.py --model_name bayes_design --protein_id 5ibo --decode_order n_to_c --decode_algorithm beam_medium --n_beams 128 --fixed_positions 34 34
+
+python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --decode_algorithm greedy --fixed_positions 34 34 --bayes_balance_factor .002
+
+python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --decode_algorithm beam_medium --n_beams 128 --fixed_positions 34 34 --bayes_balance_factor .002
+
+python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --decode_algorithm beam_medium --n_beams 128 --fixed_positions 34 34 --bayes_balance_factor .002 --from_scratch
+
+# Compare redesign design, from scratch design, wild type
+```
+python3 experiment.py compare_seq_metric --protein_id 1PIN --decode_order n_to_c --model_name bayes_design --metric log_prob --sequences QLPEGWEEKVDEETKEKIYYNKETKEITKEKMIC MLPEGWVKQRNPITGEDVCFNTLTHEMTKFEPQG KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG
+```
+greedy redesign, 
+greedy design + bayes, 
+beam redesign, 
+beam redesign + bayes, 
+old beam from scratch, QLPEGWEEKVDEETKEKIYYNKETKEITKEKMIC
+current beam from scratch, 
+
+
+# greedy redesign, greedy design + bayes, beam redesign, beam redesign + bayes, old beam from scratch, 
+python3 experiment.py compare_seq_metric --protein_id 1PIN --decode_order n_to_c --model_name bayes_design --metric log_prob --sequences MLPQQWQKIKDKKTKKWKYYNKKTKEITEKKPIG TLPKGWVEVTDPVTKKKKYYNTITKEITEKKPIG MLPEGWVKQRNPITGEDVCFNTLTHEMTKFEPQG KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG

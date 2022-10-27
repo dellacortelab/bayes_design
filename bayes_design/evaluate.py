@@ -2,12 +2,17 @@
 """
 Evaluation for Seq Design Models that maximize p(struct=S|seq) - i.e. sequence
 design models made to design a sequence that matches a backbone.
-
-Each metric should demonstrate that p(seq|struct)/p(seq) is better than p(seq|struct).
 """
+import torch
+import numpy as np
+import math
+
+from bayes_design.decode import decode_order_dict
+from bayes_design.model import model_dict
+from bayes_design.utils import get_protein, AMINO_ACID_ORDER
 
 
-def evaluate_log_prob(sequence, seq_to_struct_model, targ_struct):
+def evaluate_log_prob(seq, prob_model, decode_order, fixed_position_mask, structure=None):
     """
     Evaluate the log probability of the structure for the sequence under a 
     sequence to structure model. This measures p(struct|seq) for a designed sequence.
@@ -20,12 +25,31 @@ def evaluate_log_prob(sequence, seq_to_struct_model, targ_struct):
     You should call evaluate_log_prob with a sequence designed with p(seq|struct)
     and with a sequence designed with p(seq|struct)/p(seq) and compare the log
     probabilities.
+
+    If fixed positions are provided, they are excluded from the log probability calculation.
     
     Args:
         sequence (str): a string (no spaces) representing an amino acid sequence
         seq_to_struct_model (nn.Module): a network taking as input a 
     """
+    masked_seq = ''.join(['-' if not fixed else char for char, fixed in zip(seq, fixed_position_mask)])
+    n_fixed_positions = int(fixed_position_mask.sum())
+    n_predicted_positions = len(seq) - n_fixed_positions
+
+    # Decode order defines the order in which the masked positions are predicted
+    decode_order = decode_order_dict[decode_order](masked_seq)
+    token_to_decode = torch.tensor(decode_order[n_fixed_positions:])
+    input_seqs = [seq]*n_predicted_positions
+
+    probs = prob_model(seq=input_seqs, struct=structure, decode_order=decode_order, token_to_decode=token_to_decode)
+    log_prob = 0
+    for i, idx in enumerate(token_to_decode):
+        aa = seq[idx]
+        seq_idx = AMINO_ACID_ORDER.index(aa)
+        log_prob += math.log(probs[i, seq_idx])
     
+    return log_prob
+
 
 def evaluate_rmsd(sequence, seq_to_struct_model, targ_struct):
     """
@@ -37,13 +61,21 @@ def evaluate_rmsd(sequence, seq_to_struct_model, targ_struct):
     (measured by evaluate_log_prob).
     """
 
-def evaluate_perplexity(orig_seq, seq_model, struct_to_seq_model):
+def evaluate_perplexity(seq, prob_model, decode_order, structure=None, fixed_positions=None):
     """
-    Evaluate the perplexity of the original sequence under p(seq|struct)/p(seq) vs.
-    p(seq|struct). We expect the perplexity to be higher for p(seq|struct), because
-    perplexity is the training objective of the p(seq|struct) model.
+    Evaluate the perplexity of the sequence under the model. If fixed positions are provided, they
+    are excluded from the perplexity calculation.
     """
-    
+    log_prob = evaluate_log_prob(seq=seq, prob_model=prob_model, decode_order=decode_order, structure=structure, fixed_positions=fixed_positions)
+    n_fixed_positions = 0
+    for i in range(len(fixed_positions) // 2):
+        begin = fixed_positions[2*i]
+        end = fixed_positions[2*i + 1]
+        n_fixed_in_range = begin - end + 1
+        n_fixed_positions += n_fixed_in_range
+    n = len(seq) - n_fixed_positions
+    perplexity = np.exp(-1/n*log_prob)
+    return perplexity
 
 def evaluate_recapitulation(pred_seq, orig_seq):
     """
@@ -60,3 +92,6 @@ def evaluate_stability():
     must be based on experimental results.
     """
     pass
+
+
+metric_dict = {'log_prob':evaluate_log_prob, 'perplexity':evaluate_perplexity}

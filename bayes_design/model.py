@@ -19,10 +19,9 @@ from tr_rosetta_pytorch.cli import DEFAULT_MODEL_PATH
 
 from .utils import AMINO_ACID_ORDER, get_protein
 
-
-class ProteinMPNNWrapperOld(nn.Module):
-    def __init__(self, temperature=1.0, device=None):
-        super().__init__()
+class XLNetWrapper():
+    def __init__(self, model_name='Rostlab/prot_xlnet', device=None):
+        
         if device is not None:
             self.device = device
         elif torch.cuda.is_available():
@@ -30,152 +29,18 @@ class ProteinMPNNWrapperOld(nn.Module):
         else:
             self.device = torch.device('cpu')
 
-        self.temperature = temperature
-        #v_48_010=version with 48 edges 0.10A noise
-        model_name = "v_48_030"
-        backbone_noise=0.00               # Standard deviation of Gaussian noise to add to backbone atoms
-        path_to_model_weights='/root/ProteinMPNN/vanilla_proteinmpnn/vanilla_model_weights'          
-        hidden_dim = 128
-        num_layers = 3 
-        model_folder_path = path_to_model_weights
-        if model_folder_path[-1] != '/':
-            model_folder_path = model_folder_path + '/'
-        checkpoint_path = model_folder_path + f'{model_name}.pt'
-        checkpoint = torch.load(checkpoint_path, map_location=self.device) 
-        print('Number of edges:', checkpoint['num_edges'])
-        noise_level_print = checkpoint['noise_level']
-        print(f'Training noise level: {noise_level_print}')
-        self.model = ProteinMPNN(num_letters=21, node_features=hidden_dim, edge_features=hidden_dim, hidden_dim=hidden_dim, num_encoder_layers=num_layers, num_decoder_layers=num_layers, augment_eps=backbone_noise, k_neighbors=checkpoint['num_edges'])
+        self.model = XLNetLMHeadModel.from_pretrained(model_name)
         self.model.to(self.device)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.model.eval()
-        print("Model loaded")
-
-    
-    def forward(self, seq, struct, decode_order, token_to_decode):
-        """Accept an amino acid sequence and protein structure 
-        coordinates, return class probabilities for the next token
-        Args:
-            seq (len L str): a string representation of an amino 
-                acid sequence with unknown residues indicated with a dash (-)
-            struct ((L x 4 x 3) torch.Tensor): batch_size x seq_length x 
-                num_atoms x num_coordinates tensor
-            decode_order (len L list): list of the order of indices to decode.
-                This determines the values in the permutation mask. Each index 
-                attends to all indices that occur previously in the decoding_order.
-            token_to_decode (int): index in the range [0, L-1] indicating which 
-                token to decode next. If not specified, this function will predict the
-                first token indicated with a dash
-        Returns:
-            probs ((N x 20) torch.Tensor): a vector of probabilities for the next
-                token
-        """
-        L = len(seq)
-
-        # Convert amino acid character to index
-        seq = re.sub(r"-", "X", seq)
-        seq = torch.tensor([AMINO_ACID_ORDER.index(aa) for aa in seq]).to(self.device)
-        with torch.no_grad():
-            # Default values
-            mask = torch.ones(1, L).float().to(self.device)
-            chain_M = torch.ones(1, L).float().to(self.device)
-            chain_M_pos = torch.ones(1, L).float().to(self.device)
-            chain_encoding_all = torch.ones(1, L).float().to(self.device)
-            residue_idx = torch.arange(L).unsqueeze(0).to(self.device)
-            bias_AAs_np = np.zeros(len(AMINO_ACID_ORDER))
-            bias_by_res = torch.zeros([1, L, len(AMINO_ACID_ORDER)]).to(self.device)
-            # randn determines the decoding order. The indices in the randn vector with the lowest values will be decoded first
-            randn = torch.argsort(torch.tensor(decode_order)).to(self.device)
-            # Predict tokens except 'X'
-            omit_AAs_np = np.array([AA in ['X'] for AA in AMINO_ACID_ORDER]).astype(np.float32)
-            out = self.model.sample(X=struct.unsqueeze(0).to(self.device), randn=randn, S_true=seq.unsqueeze(0), chain_mask=chain_M, chain_encoding_all=chain_encoding_all, residue_idx=residue_idx, mask=mask, chain_M_pos=chain_M_pos, bias_AAs_np=bias_AAs_np, omit_AAs_np=omit_AAs_np, bias_by_res=bias_by_res, temperature=self.temperature)
-            probs = out['probs']
-        # Return the probabilities for th 0th chain and the 0th residue
-        return probs[0, token_to_decode]
-
-class XLNetWrapperOld(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.device = torch.device("cuda:0" if (torch.cuda.is_available()) else "cpu")
-        self.tokenizer = XLNetTokenizer.from_pretrained('Rostlab/prot_xlnet', do_lower_case=False)
-        self.model = XLNetLMHeadModel.from_pretrained('Rostlab/prot_xlnet')
-        self.model.to(self.device)
+        self.tokenizer = XLNetTokenizer.from_pretrained(model_name)
 
         xlnet_vocab_dict = self.tokenizer.get_vocab()
         xlnet_vocab_dict['▁X'] = xlnet_vocab_dict['X']
         self.canonical_idx_to_xlnet_idx = torch.tensor([xlnet_vocab_dict['▁' + aa] for aa in AMINO_ACID_ORDER])
 
-    def forward(self, seq, decode_order, token_to_decode):
+    def __call__(self, seq, decode_order, token_to_decode, struct=None, mask_type='bidirectional_autoregressive'):
         """Accept an amino acid sequence, return class probabilities for the next token
         Args:
-            seq (len N list of len L_seq str): a string representation of an amino 
-                acid sequence with unknown residues indicated with a dash (-)
-            decode_order (len L list): list of the order of indices to decode.
-                This determines the values in the permutation mask. Each index 
-                attends to all indices that occur previously in the decoding_order.
-            token_to_decode (int): index in the range [0, L-1] indicating which 
-                token to decode next. If not specified, this function will predict the
-                first token indicated with dash (-)
-        Returns:
-            probs ((20) torch.Tensor): a vector of probabilities for the next
-                token
-        """
-        # Determine which indices should be masked for prediction
-        masked_indices = [i for i, char in enumerate(seq) if char == '-']
-        masked_indices.append(token_to_decode)
-        
-        # Replace rare amino acids with "X"
-        seq = re.sub(r"[UZOB]", "X", seq)
-        # Huggingface XLNet expects a space-separated sequence
-        seq = " ".join(seq)
-        # Replace '-' characters with the <mask> token
-        seq = re.sub(r"-", "<mask>", seq)
-        # Convert characters to token ids
-        input_ids = torch.tensor(self.tokenizer.encode(seq)).unsqueeze(0).to(self.device)
-        L = input_ids.shape[1]
-        
-        # Mask unknown tokens and the token to predict
-        perm_mask = torch.ones((1, L, L), dtype=torch.float).to(self.device)
-        decode_order = torch.tensor(decode_order)
-        for i, idx in enumerate(decode_order):
-            # idx attends to all tokens before idx in the decoding_order
-            perm_mask[:, idx, decode_order[:i]] = 0.0
-
-        # Indicate which token to decode
-        target_mapping = torch.zeros((1, 1, L), dtype=torch.float).to(self.device)  # Shape [batch_size, 1, seq_length]
-        target_mapping[0, 0, token_to_decode] = 1.0  # Our first prediction will be the indicated token
-
-        # Get probabilities
-        with torch.no_grad():
-            output_dict = self.model(input_ids=input_ids, perm_mask=perm_mask, target_mapping=target_mapping, return_dict=True)
-            logits = output_dict['logits']  # logits has shape [batch_size, 1, config.vocab_size]
-            probs = torch.nn.functional.softmax(logits, dim=-1)
-            index_corrected_probs = probs[0][0][self.canonical_idx_to_xlnet_idx]
-
-        return index_corrected_probs
-
-class XLNetWrapper(nn.Module):
-    def __init__(self, device=None):
-        super().__init__()
-        if device is not None:
-            self.device = device
-        elif torch.cuda.is_available():
-            self.device = torch.device("cuda:0")
-        else:
-            self.device = torch.device('cpu')
-
-        self.tokenizer = XLNetTokenizer.from_pretrained('Rostlab/prot_xlnet', do_lower_case=False)
-        self.model = XLNetLMHeadModel.from_pretrained('Rostlab/prot_xlnet')
-        self.model.to(self.device)
-
-        xlnet_vocab_dict = self.tokenizer.get_vocab()
-        xlnet_vocab_dict['▁X'] = xlnet_vocab_dict['X']
-        self.canonical_idx_to_xlnet_idx = torch.tensor([xlnet_vocab_dict['▁' + aa] for aa in AMINO_ACID_ORDER])
-
-    def forward(self, seq, decode_order, token_to_decode):
-        """Accept an amino acid sequence, return class probabilities for the next token
-        Args:
-            seq (len N list of len L_seq str): a string representation of an amino 
+            seq (len 1 list of len L_seq str): a string representation of an amino 
                 acid sequence with unknown residues indicated with a dash (-)
             decode_order (len L list): list of the order of indices to decode.
                 This determines the values in the permutation mask. Each index 
@@ -186,47 +51,77 @@ class XLNetWrapper(nn.Module):
             probs ((20) torch.Tensor): a vector of probabilities for the next
                 token
         """
-        N = len(seq)
-        
-        # Determine which indices should be masked for prediction
-        masked_indices = [i for i, char in enumerate(seq[0]) if char == '-']
-        masked_indices.append(token_to_decode)
         
         # Replace rare amino acids with "X"
         seq = [re.sub(r"[UZOB]", "X", s) for s in seq]
         # Huggingface XLNet expects a space-separated sequence
         seq = [" ".join(s) for s in seq]
-        # Replace '-' characters with the <mask> token
         seq = [re.sub(r"-", "<mask>", s) for s in seq]
-        seq_enc = self.tokenizer(seq)['input_ids']
-        # Convert characters to token ids
-        input_ids = torch.tensor(seq_enc).to(self.device)
-        L = input_ids.shape[1]
+        input_ids = self.tokenizer(seq, return_tensors='pt', add_special_tokens=False)['input_ids']
+        seq_len = input_ids.shape[-1]
+        # Mask '-' tokens
         
-        # Mask unknown tokens and the token to predict
-        perm_mask = torch.ones((N, L, L), dtype=torch.float).to(self.device)
-        decode_order = torch.tensor(decode_order)
-        for i, idx in enumerate(decode_order):
-            # idx attends to all tokens before idx in the decoding_order
-            perm_mask[:, idx, decode_order[:i]] = 0.0
+        if not hasattr(token_to_decode, '__len__'):
+            token_to_decode = [token_to_decode]
 
-        # Indicate which token to decode
-        target_mapping = torch.zeros((N, 1, L), dtype=torch.float).to(self.device)  # Shape [batch_size, number_of_tokens_to_predict, seq_length]
-        # N x 21
-        if hasattr(token_to_decode, '__len__'):
-            target_mapping[range(len(token_to_decode)), 0, token_to_decode] = 1.0
-        else:
-            target_mapping[:, 0, token_to_decode] = 1.0
+        n_tokens = len(token_to_decode)
 
-        # Get probabilities
-        with torch.no_grad():
-            output_dict = self.model(input_ids=input_ids, perm_mask=perm_mask, target_mapping=target_mapping, return_dict=True)
-            logits = output_dict['logits']  # logits has shape [batch_size, 1, config.vocab_size]
-            probs = torch.nn.functional.softmax(logits, dim=-1)
-            index_corrected_probs = probs[:, 0, self.canonical_idx_to_xlnet_idx]
+        perm_mask = torch.ones((n_tokens, seq_len, seq_len), dtype=torch.float) # perm_mask[0, j, k] = 1 means that the jth token cannot see the kth token
+        if mask_type == 'unidirectional_autoregressive':
+            # Allow each token to see tokens preceding it in decode order
+            for i, tok in enumerate(token_to_decode):
+                token_to_decode_idx = decode_order.index(tok)
+                for j, idx in enumerate(decode_order[:token_to_decode_idx]):
+                    perm_mask[i, idx, decode_order[:j+1]] = 0.0
+                    # Should this be +1? Should tokens before the token to predict be able to see themselves?
+            # decode_order: [2, 1, 0]
+            # i = 0 -> decode pos 2 blindly
+            # i = 1 -> decode pos 1
+            # j = 0, idx = 2
+            # perm_mask[1, 2, [2]] = 0.
+            # i = 2 -> decode pos 0
+            # j = 0, idx = 2
+            # perm_mask[2, 2, [2]] = 0.
+            # j = 1, idx = 1
+            # perm_mask[2, 1, [2, 1]] = 0.
+        elif mask_type == 'bidirectional_autoregressive':
+            for i, tok in enumerate(token_to_decode):
+                token_to_decode_idx = decode_order.index(tok)
+                perm_mask[i, :, decode_order[:token_to_decode_idx]] = 0.0 # Allow all tokens to see tokens preceding token_to_decode 
+            # decode_order: [2, 1, 0]
+            # i = 0 -> decode pos 2 blindly
+            # i = 1 -> decode pos 1
+            # perm_mask[1, :, 2] = 0
+            # i = 2 -> decode pos 0
+            # perm_mask[1, :, 2] = 0
+            # perm_mask[1, :, [2, 1]] = 0
+        elif mask_type == 'bidirectional_mlm':
+            for i, tok in enumerate(token_to_decode):
+                perm_mask[i, :, np.arange(seq_len) != tok] = 0.0 # Allow full bidirectional context except for the decoded token (masked-language-model-style. this is not autoregressive)
+            # decode_order: [2, 1, 0]
+            # i = 0 -> decode pos 2
+            # perm_mask[0, :, [1, 0]] = 0.0
+            # i = 1 -> decode pos 1
+            # perm_mask[1, :, [2, 0]] = 0.0
+            # i = 2 -> decode pos 0
+            # perm_mask[2, :, [2, 1]] = 0.0
 
-        # Ignore the last entry, corresponding to 'X'
-        return index_corrected_probs[:, :-1]
+        target_mapping = torch.zeros(
+            (n_tokens, 1, seq_len), dtype=torch.float
+        )  # Shape [batch_size=n_tokens, num_tokens_to_predict=1, seq_length=n_tokens]
+        for i, tok in enumerate(token_to_decode):
+            target_mapping[i, 0, decode_order[i]] = 1.0 # Predict the ith token
+
+        with torch.inference_mode():
+            out = self.model(input_ids.to(self.device), perm_mask=perm_mask.to(self.device), target_mapping=target_mapping.to(self.device))
+            # logits has shape [batch_size, 1, config.vocab_size]
+            index_corrected_logits = out.logits[:, 0, self.canonical_idx_to_xlnet_idx]
+            # Ignore the last entry, corresponding to 'X'
+            index_corrected_logits = index_corrected_logits[:, :-1]
+            probs = torch.nn.functional.softmax(index_corrected_logits, dim=-1)
+        
+        return probs
+
 
 class TransformerXLU100Wrapper(nn.Module):
     def __init__(self):
@@ -278,7 +173,7 @@ class ProteinMPNNWrapper(nn.Module):
         """Accept an amino acid sequence and protein structure 
         coordinates, return class probabilities for the next token
         Args:
-            seq (len L str): a string representation of an amino 
+            seq (len N list of len L_seq str): a string representation of an amino 
                 acid sequence with unknown residues indicated with a dash (-)
             struct ((L x 4 x 3) torch.Tensor): batch_size x seq_length x 
                 num_atoms x num_coordinates tensor
@@ -294,7 +189,6 @@ class ProteinMPNNWrapper(nn.Module):
         """
         N = len(seq)
         L = len(seq[0])
-
         assert L == struct.shape[0], "Sequence length must match the number of residues in the provided structure"
         # Convert amino acid character to index
         seq = [re.sub(r"-", "X", s) for s in seq]
@@ -312,13 +206,14 @@ class ProteinMPNNWrapper(nn.Module):
             log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, randn=randn, use_input_decoding_order=True, decoding_order=torch.tensor(decode_order).expand(N, L).to(self.device))
             probs = torch.exp(log_probs)
             # N x L x 20
-        
+            # Ignore the last entry, corresponding to 'X', and normalize
+            probs = probs[:, :, :-1] / probs[:, :, :-1].sum(dim=-1).unsqueeze(-1)
+
         if hasattr(token_to_decode, '__len__'):
-            return probs[range(len(token_to_decode)), token_to_decode][:, :-1]
+            return probs[range(len(token_to_decode)), token_to_decode]
             # N x 20
         else:
-            # Ignore the last entry, corresponding to 'X'
-            return probs[:, token_to_decode][:, :-1]
+            return probs[:, token_to_decode]
             # N x 20
 
         #     # Required for sampling
@@ -340,7 +235,7 @@ class ESMIF1Wrapper(nn.Module):
         pass
 
 class BayesStructModel(nn.Module):
-    def __init__(self, device=None, **kwargs):
+    def __init__(self, device=None, bayes_balance_factor=0.002, **kwargs):
         super().__init__()
         if device is not None:
             self.device = device
@@ -352,12 +247,41 @@ class BayesStructModel(nn.Module):
         self.seq_model = XLNetWrapper(**kwargs)
         self.seq_struct_model = ProteinMPNNWrapper(**kwargs)
 
+        self.bayes_balance_factor = bayes_balance_factor
+
     def forward(self, seq, struct, decode_order, token_to_decode):
-        p_seq = self.seq_model(seq=seq, decode_order=decode_order, token_to_decode=token_to_decode)
-        p_seq_struct = self.seq_struct_model(seq=seq, struct=struct, decode_order=decode_order, token_to_decode=token_to_decode)
-        p_struct_seq = (p_seq_struct / p_seq)
+        p_seq = self.seq_model(seq=seq, decode_order=decode_order, token_to_decode=token_to_decode).clone()
+        p_seq_struct = self.seq_struct_model(seq=seq, struct=struct, decode_order=decode_order, token_to_decode=token_to_decode).clone()
+
+        # unbalanced_logits = (p_seq_struct / p_seq)
+        # p_struct_seq_1 = unbalanced_logits / unbalanced_logits.sum(dim=-1).unsqueeze(-1)
+        # torch.set_printoptions(sci_mode=False)
+        # print("seq struct")
+        # print(p_seq_struct[0])
+        # print('seq')
+        # print(p_seq[0])
+        # print('unbalanced logits')
+        # print((unbalanced_logits)[0])
+        # print('unbalanced normalized probs')
+        # print(p_struct_seq_1[0])
+
+        # Add a "balance factor" so that we don't end up with large probability ratios at the tails of the distributions
+        p_seq += self.bayes_balance_factor
+        p_seq_struct += self.bayes_balance_factor
+        balanced_logits = (p_seq_struct / p_seq)
+        
         # Normalize probabilities
-        p_struct_seq = p_struct_seq / p_struct_seq.sum(dim=-1).unsqueeze(-1)
+        p_struct_seq = balanced_logits / balanced_logits.sum(dim=-1).unsqueeze(-1)
+        # print("seq struct")
+        # print(p_seq_struct[0])
+        # print('seq')
+        # print(p_seq[0])
+        # print('balanced_logits')
+        # print((balanced_logits)[0])
+        # print('balanced normalized probs')
+        # print(p_struct_seq[0])
+        # import pdb; pdb.set_trace()
+
         return p_struct_seq
 
 class TrRosettaWrapper():

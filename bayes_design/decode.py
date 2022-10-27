@@ -96,32 +96,85 @@ def get_n_to_c_decode_order(seq):
     decode_order = fixed_indices + indices_to_predict
     return decode_order
 
-def greedy_decode(prob_model, struct, seq, decode_order):
+def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
+    """
+    This function works.
+    """
     current_seq = seq
     for idx in decode_order:
-        probs = prob_model(seq=current_seq, struct=struct, decode_order=decode_order, token_to_decode=idx)
+        if fixed_position_mask[idx] == True:
+            # Do not change this token
+            continue
+        if not from_scratch:
+            # Mask the current token being decoded
+            current_seq = list(current_seq)
+            current_seq[idx] = '-'
+            current_seq = ''.join(current_seq)
+        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx)
         next_item = torch.argmax(probs)
         aa = AMINO_ACID_ORDER[next_item]
         current_seq = list(current_seq)
         current_seq[idx] = aa
         current_seq = ''.join(current_seq)
-        # print(current_seq)
     return current_seq
 
-def beam_decode(prob_model, struct, seq, decode_order, n_beams):
+def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
+    """
+    This function works
+    """
+    current_seq = seq
+    for idx in decode_order:
+        if fixed_position_mask[idx] == True:
+            # Do not change this token
+            continue
+        if not from_scratch:
+            # Mask the current token being decoded
+            current_seq = list(current_seq)
+            current_seq[idx] = '-'
+            current_seq = ''.join(current_seq)
+        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx).detach().cpu().numpy()
+        next_item = np.random.choice(np.arange(20), p=probs)
+        aa = AMINO_ACID_ORDER[next_item]
+        current_seq = list(current_seq)
+        current_seq[idx] = aa
+        current_seq = ''.join(current_seq)
+    return current_seq
+
+def random_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
+    """
+    This function works.
+    """
+    current_seq = seq
+    for idx in decode_order:
+        if fixed_position_mask[idx] == True:
+            # Do not change this token
+            continue
+        next_item = np.random.choice(np.arange(21))
+        aa = AMINO_ACID_ORDER[next_item]
+        current_seq = list(current_seq)
+        current_seq[idx] = aa
+        current_seq = ''.join(current_seq)
+    return current_seq
+
+def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
+    """
+    This function works.
+    """    
     top_candidates = [[list(seq), 0.0]]
     for j, decode_idx in enumerate(decode_order):
         print("j:", j)
+        # If token is fixed, select the fixed token, regardless of probability
+        if fixed_position_mask[decode_idx] == True:
+            continue
         all_candidates = []
         for (current_seq, score) in top_candidates:
+            if not from_scratch:
+                # Mask the current token being decoded
+                current_seq = list(current_seq)
+                current_seq[decode_idx] = '-'
+                current_seq = ''.join(current_seq)
             probs = prob_model(seq=[''.join(current_seq)], struct=struct, decode_order=decode_order, token_to_decode=decode_idx)[0].tolist()
-            # If token is fixed, select the fixed token, regardless of probability
-            if seq[decode_idx] != '-':
-                candidate = [current_seq, score + log(probs[AMINO_ACID_ORDER.index(seq[decode_idx])])]
-                all_candidates.append(candidate)
-                continue
-            # Ignore the last token, 'X', to which we assign 0 probability
-            for i, prob in enumerate(probs[:-1]):
+            for i, prob in enumerate(probs):
                 candidate_seq = current_seq.copy()
                 candidate_seq[decode_idx] = AMINO_ACID_ORDER[i]
                 candidate = [candidate_seq, score + log(prob)]
@@ -133,29 +186,31 @@ def beam_decode(prob_model, struct, seq, decode_order, n_beams):
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
     return top_candidates[0]
 
-def beam_decode_medium(prob_model, struct, seq, decode_order, n_beams):
+def beam_decode_medium(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
+    """
+    This function works. TODO: Incorporate 
+        if not from_scratch:
+            # Mask the current token being decoded
+            current_seq = list(current_seq)
+            current_seq[idx] = '-'
+            current_seq = ''.join(current_seq)
+    """
     top_candidates = [[list(seq), 0.0]]
     for j, decode_idx in enumerate(decode_order):
         print("j:", j)
+        # If token is fixed, select the fixed token, regardless of probability
+        if fixed_position_mask[decode_idx] == True:
+            continue
         top_sequences = [seq for seq, score in top_candidates]
+        # if not from_scratch:
+        #     for i in range(len(top_sequences)):
+        #         top_sequences[i][decode_idx] = '-'
+        #     # top_sequences[:][decode_idx] = '-'
+        #     import pdb; pdb.set_trace()
         top_candidate_probs = prob_model(seq=[''.join(seq) for seq in top_sequences], struct=struct, decode_order=decode_order, token_to_decode=decode_idx)
         all_candidates = []
         for ((current_seq, score), next_aa_probs) in zip(top_candidates, top_candidate_probs):
-            next_aa_probs = next_aa_probs.tolist()
-            # If token is fixed, select the fixed token, regardless of probability
-            if seq[decode_idx] != '-':
-                # For fixed positions, do we want:
-                # argmax_seq_b p(seq_b, seq_a=A | seq_a=A, struct=(X, Y)), which includes the likelihood of fixed tokens in the factorized probability:
-                # candidate = [current_seq, score + log(next_aa_probs[AMINO_ACID_ORDER.index(seq[decode_idx])])]
-                # or do we want
-                # argmax_seq_b p(seq_b | seq_a=A, struct=(X, Y)), which excludes the likelihood of fixed tokens in the factorized probability:
-                # candidate = [current_seq, score]
-                # According to the math, we want option 2
-                candidate = [current_seq, score]
-                all_candidates.append(candidate)
-                continue
-            # Ignore the last token, 'X', to which we assign 0 probability
-            for i, prob in enumerate(next_aa_probs[:-1]):
+            for i, prob in enumerate(next_aa_probs.tolist()):
                 candidate_seq = current_seq.copy()
                 candidate_seq[decode_idx] = AMINO_ACID_ORDER[i]
                 candidate = [candidate_seq, score + log(prob)]
@@ -167,7 +222,10 @@ def beam_decode_medium(prob_model, struct, seq, decode_order, n_beams):
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
     return top_candidates[0]
 
-def beam_decode_fast(prob_model, struct, seq, decode_order, n_beams):
+def beam_decode_fast(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
+    """
+    This function does not yet work.
+    """
     L = len(seq)
     top_candidates = [[list(seq), 0.0]]
     for j, decode_idx in enumerate(decode_order):
@@ -181,7 +239,7 @@ def beam_decode_fast(prob_model, struct, seq, decode_order, n_beams):
         proposed_sequences[:, np.arange(len(AMINO_ACID_ORDER)), decode_idx] = np.array(list(AMINO_ACID_ORDER))
         # proposed_sequences: n_beams x 21 x L
 
-        if seq[decode_idx] != '-':
+        if fixed_position_mask[decode_idx] == True:
             fixed_aa_idx = AMINO_ACID_ORDER.index(seq[decode_idx])
             probs = probs[:, fixed_aa_idx].unsqueeze(-1)
             # probs: n_beams x 1
@@ -203,58 +261,33 @@ def beam_decode_fast(prob_model, struct, seq, decode_order, n_beams):
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
     return top_candidates[0]
 
-def sample_decode(struct_to_seq_model, seq_model, struct, seq, decode_order):
+def compare_decode(struct_to_seq_model, seq_model, struct, seq, decode_order, bayes_balance_factor=0.):
+    """Decode using a greedy algorithm and return the distributions p(seq|struct), p(seq), and p(struct|seq) over each amino 
+    acid in the sequence
+    """
+    probs = []
     current_seq = seq
     for idx in decode_order:
-        probs = struct_to_seq_model(seq=current_seq, struct=struct, decode_order=decode_order, token_to_decode=idx).tonumpy()
-        next_item = np.random.choice(np.arange(21), p=probs)
+        p_seq_struct = struct_to_seq_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx).clone()
+        p_seq = seq_model([current_seq], decode_order=decode_order, token_to_decode=idx).clone()
+        p_seq_struct_div_p_seq = p_seq_struct / p_seq
+        p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
+        # Select next item with unbalanced probabilities so that we design the same sequence every time and can compare different sizes of balance factor
+        next_item = torch.argmax(p_struct_seq)
+        # For non-zero balance factor, return probabilities associated with balanced data
+        if bayes_balance_factor != 0:
+            p_seq_struct += bayes_balance_factor
+            p_seq += bayes_balance_factor
+            p_seq_struct_div_p_seq = p_seq_struct / p_seq
+            p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
+        probs.append((p_seq_struct, p_seq, p_struct_seq))
         aa = AMINO_ACID_ORDER[next_item]
         current_seq = list(current_seq)
         current_seq[idx] = aa
         current_seq = ''.join(current_seq)
-        # print(current_seq)
-    return current_seq
 
-def random_decode(struct_to_seq_model, seq_model, struct, seq, decode_order):
-    current_seq = seq
-    for idx in decode_order:
-        next_item = np.random.choice(np.arange(21))
-        aa = AMINO_ACID_ORDER[next_item]
-        current_seq = list(current_seq)
-        current_seq[idx] = aa
-        current_seq = ''.join(current_seq)
-    return current_seq
+    return current_seq, probs
 
-def compare_decode(struct_to_seq_model, seq_model, struct, seq, decode_order):
-    vocab_dict = {v: k for k, v in vocab_dict.items()}
-    import math
-    def truncate(number, digits) -> float:
-        # Improve accuracy with floating point operations, to avoid truncate(16.4, 2) = 16.39 or truncate(-1.13, 2) = -1.12
-        nbDecimals = len(str(number).split('.')[1]) 
-        if nbDecimals <= digits:
-            return number
-        stepper = 10.0 ** digits
-        return math.trunc(stepper * number) / stepper
-    print([(vocab_dict[i], truncate(prob.item(), 3)) for i, prob in enumerate(probs[0][0])])
-    
-    current_seq = seq
-    for i in range(len(struct)):
-        p_seq_struct = struct_to_seq_model(struct, current_seq)
-        p_seq = seq_model(current_seq)
-        next_item = torch.argmax(p_seq_struct / p_seq)
-        aa = AMINO_ACID_ORDER[next_item]
-        current_seq += aa
-    return current_seq
-
-def plot_decode(struct_to_seq_model, seq_model, struct, seq, decode_order):
-    current_seq = seq
-    for i in range(len(struct)):
-        p_seq_struct = struct_to_seq_model(struct, current_seq)
-        p_seq = seq_model(current_seq)
-        next_item = torch.argmax(p_seq_struct / p_seq)
-        aa = AMINO_ACID_ORDER[next_item]
-        current_seq += aa
-    return current_seq
 
 decode_order_dict = {'proximity':get_proximity_decode_order, 'reverse_proximity':get_reverse_proximity_decode_order, 'random':get_random_decode_order, 'n_to_c':get_n_to_c_decode_order}
-decode_algorithm_dict = {'greedy':greedy_decode, 'beam_fast':beam_decode_fast, 'beam_medium':beam_decode_medium, 'beam':beam_decode, 'sample':sample_decode, 'random':random_decode, 'compare':compare_decode, 'plot':plot_decode} 
+decode_algorithm_dict = {'greedy':greedy_decode, 'beam_fast':beam_decode_fast, 'beam_medium':beam_decode_medium, 'beam':beam_decode, 'sample':sample_decode, 'random':random_decode, 'compare':compare_decode} 

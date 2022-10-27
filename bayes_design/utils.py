@@ -21,6 +21,18 @@ def get_protein(pdb_code='6MRR', structures_dir='/data/structures'):
     struct = torch.tensor([protein['coords_chain_A']['N_chain_A'], protein['coords_chain_A']['CA_chain_A'], protein['coords_chain_A']['C_chain_A'], protein['coords_chain_A']['O_chain_A']]).transpose(0, 1)
     return protein['seq'], struct
 
+def get_fixed_position_mask(fixed_position_list, seq_len):
+    # Masked positions are the positions to predict/design
+    # Default to no fixed positions, and thus predict all positions
+    fixed_position_mask = np.zeros(seq_len)
+    # Preserve fixed positions
+    for i in range(0, len(fixed_position_list), 2):
+        # -1 because residues are 1-indexed
+        fixed_range_start = fixed_position_list[i] - 1
+        # -1 because residues are 1-indexed and +1 because we are including the endpoint
+        fixed_range_end = fixed_position_list[i+1]
+        fixed_position_mask[fixed_range_start:fixed_range_end] = 1.
+    return fixed_position_mask
 
 def get_cb_coordinates(pdb_code, structures_dir='/data/structures'):
     """Gets the coordinates of the primary four atoms for each residue. Returns an
