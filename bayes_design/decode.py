@@ -261,33 +261,7 @@ def beam_decode_fast(prob_model, struct, seq, decode_order, fixed_position_mask,
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
     return top_candidates[0]
 
-def compare_decode(struct_to_seq_model, seq_model, struct, seq, decode_order, bayes_balance_factor=0.):
-    """Decode using a greedy algorithm and return the distributions p(seq|struct), p(seq), and p(struct|seq) over each amino 
-    acid in the sequence
-    """
-    probs = []
-    current_seq = seq
-    for idx in decode_order:
-        p_seq_struct = struct_to_seq_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx).clone()
-        p_seq = seq_model([current_seq], decode_order=decode_order, token_to_decode=idx).clone()
-        p_seq_struct_div_p_seq = p_seq_struct / p_seq
-        p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
-        # Select next item with unbalanced probabilities so that we design the same sequence every time and can compare different sizes of balance factor
-        next_item = torch.argmax(p_struct_seq)
-        # For non-zero balance factor, return probabilities associated with balanced data
-        if bayes_balance_factor != 0:
-            p_seq_struct += bayes_balance_factor
-            p_seq += bayes_balance_factor
-            p_seq_struct_div_p_seq = p_seq_struct / p_seq
-            p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
-        probs.append((p_seq_struct, p_seq, p_struct_seq))
-        aa = AMINO_ACID_ORDER[next_item]
-        current_seq = list(current_seq)
-        current_seq[idx] = aa
-        current_seq = ''.join(current_seq)
-
-    return current_seq, probs
 
 
 decode_order_dict = {'proximity':get_proximity_decode_order, 'reverse_proximity':get_reverse_proximity_decode_order, 'random':get_random_decode_order, 'n_to_c':get_n_to_c_decode_order}
-decode_algorithm_dict = {'greedy':greedy_decode, 'beam_fast':beam_decode_fast, 'beam_medium':beam_decode_medium, 'beam':beam_decode, 'sample':sample_decode, 'random':random_decode, 'compare':compare_decode} 
+decode_algorithm_dict = {'greedy':greedy_decode, 'beam_fast':beam_decode_fast, 'beam_medium':beam_decode_medium, 'beam':beam_decode, 'sample':sample_decode, 'random':random_decode}

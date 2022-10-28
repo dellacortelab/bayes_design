@@ -31,6 +31,7 @@ class XLNetWrapper():
 
         self.model = XLNetLMHeadModel.from_pretrained(model_name)
         self.model.to(self.device)
+        self.model.eval()
         self.tokenizer = XLNetTokenizer.from_pretrained(model_name)
 
         xlnet_vocab_dict = self.tokenizer.get_vocab()
@@ -51,6 +52,11 @@ class XLNetWrapper():
             probs ((20) torch.Tensor): a vector of probabilities for the next
                 token
         """
+        # When using bidirection autoregressive, we should get the same probabilities whether providing the whole sequence
+        # or the masked sequence, because the permutation mask protects us.
+        # When using unidirectional autoregressive, we should get the same probabilities as well.
+        # When using bidirectional mlm, we should get different probabilities as we take advantage of the provided
+        # future context in one case and not the other
         
         # Replace rare amino acids with "X"
         seq = [re.sub(r"[UZOB]", "X", s) for s in seq]
@@ -66,35 +72,74 @@ class XLNetWrapper():
 
         n_tokens = len(token_to_decode)
 
+        # perm_mask should be the mask for content stream attention (allow items to see self), because the xlnet 
+        # implementation adds an identity matrix to perm_mask to get the query stream attention, where items are
+        # masked from seeing self. The target_mapping ensures that we use query stream attention when predicting
+        # the target elements https://github.com/huggingface/transformers/blob/v4.23.1/src/transformers/models/xlnet/modeling_xlnet.py#L1172
         perm_mask = torch.ones((n_tokens, seq_len, seq_len), dtype=torch.float) # perm_mask[0, j, k] = 1 means that the jth token cannot see the kth token
         if mask_type == 'unidirectional_autoregressive':
             # Allow each token to see tokens preceding it in decode order
             for i, tok in enumerate(token_to_decode):
                 token_to_decode_idx = decode_order.index(tok)
-                for j, idx in enumerate(decode_order[:token_to_decode_idx]):
+                # This is + 1 because we decide what the decoded item sees
+                for j, idx in enumerate(decode_order[:token_to_decode_idx + 1]):
+                    # This should be j+1, because we allow tokens to see themselves
                     perm_mask[i, idx, decode_order[:j+1]] = 0.0
-                    # Should this be +1? Should tokens before the token to predict be able to see themselves?
             # decode_order: [2, 1, 0]
-            # i = 0 -> decode pos 2 blindly
+            # i = 0 -> decode pos 2
+            #   j = 0, idx = 2  
+            #       perm_mask[0, 2, [2]] = 0
+            #           [1, 1, 1]
+            #           [1, 1, 1]
+            #           [1, 1, 0]
             # i = 1 -> decode pos 1
-            # j = 0, idx = 2
-            # perm_mask[1, 2, [2]] = 0.
+            #   j = 0, idx = 2
+            #       perm_mask[1, 2, [2]] = 0.
+            #   j = 1, idx = 1
+            #       perm_mask[1, 1, [2, 1]] = 0.
+            #           [1, 1, 1]
+            #           [1, 0, 0]
+            #           [1, 1, 0]
             # i = 2 -> decode pos 0
-            # j = 0, idx = 2
-            # perm_mask[2, 2, [2]] = 0.
-            # j = 1, idx = 1
-            # perm_mask[2, 1, [2, 1]] = 0.
+            #   j = 0, idx = 2
+            #       perm_mask[2, 2, [2]] = 0.
+            #   j = 1, idx = 1
+            #       perm_mask[2, 1, [2, 1]] = 0.
+            #           [1, 1, 1]
+            #           [1, 0, 0]
+            #           [1, 1, 0]
+            #   j = 2, idx = 0
+            #       perm_mask[2, 0, [2, 1, 0]] = 0.
+            #           [0, 0, 0]
+            #           [1, 0, 0]
+            #           [1, 1, 0]
         elif mask_type == 'bidirectional_autoregressive':
             for i, tok in enumerate(token_to_decode):
                 token_to_decode_idx = decode_order.index(tok)
-                perm_mask[i, :, decode_order[:token_to_decode_idx]] = 0.0 # Allow all tokens to see tokens preceding token_to_decode 
-            # decode_order: [2, 1, 0]
-            # i = 0 -> decode pos 2 blindly
-            # i = 1 -> decode pos 1
-            # perm_mask[1, :, 2] = 0
-            # i = 2 -> decode pos 0
-            # perm_mask[1, :, 2] = 0
-            # perm_mask[1, :, [2, 1]] = 0
+                for prev_tok_1 in decode_order[:token_to_decode_idx]:
+                    for prev_tok_2 in decode_order[:token_to_decode_idx]:
+                        # Allow all tokens to see tokens preceding token_to_decode
+                        perm_mask[i, prev_tok_1, prev_tok_2] = 0.0
+                perm_mask[i, tok, decode_order[:token_to_decode_idx+1]] = 0.0
+            #       [1, 1, 1, 1]
+            #       [1, 1, 1, 1]
+            #       [1, 1, 1, 1]
+            #       [1, 1, 1, 0]
+            #
+            #       [1, 1, 1, 1]
+            #       [1, 1, 1, 1]
+            #       [1, 1, 0, 0]
+            #       [1, 1, 1, 0]
+            #
+            #       [1, 1, 1, 1]
+            #       [1, 0, 0, 0]
+            #       [1, 1, 0, 0]
+            #       [1, 1, 0, 0]
+            #
+            #       [0, 0, 0, 0]
+            #       [1, 0, 0, 0]
+            #       [1, 0, 0, 0]
+            #       [1, 0, 0, 0]
         elif mask_type == 'bidirectional_mlm':
             for i, tok in enumerate(token_to_decode):
                 perm_mask[i, :, np.arange(seq_len) != tok] = 0.0 # Allow full bidirectional context except for the decoded token (masked-language-model-style. this is not autoregressive)
@@ -110,7 +155,7 @@ class XLNetWrapper():
             (n_tokens, 1, seq_len), dtype=torch.float
         )  # Shape [batch_size=n_tokens, num_tokens_to_predict=1, seq_length=n_tokens]
         for i, tok in enumerate(token_to_decode):
-            target_mapping[i, 0, decode_order[i]] = 1.0 # Predict the ith token
+            target_mapping[i, 0, tok] = 1.0 # Predict the ith token
 
         with torch.inference_mode():
             out = self.model(input_ids.to(self.device), perm_mask=perm_mask.to(self.device), target_mapping=target_mapping.to(self.device))
@@ -166,8 +211,6 @@ class ProteinMPNNWrapper(nn.Module):
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.eval()
         print("Model loaded")
-        #print(self.model.state_dict().keys())
-        #import pdb; pdb.set_trace()
     
     def forward(self, seq, struct, decode_order, token_to_decode):
         """Accept an amino acid sequence and protein structure 

@@ -62,6 +62,29 @@ def compare_struct_probs(args):
         im = Image.fromarray(img_1)
         im.convert('RGB').save(os.path.join(args.results_dir, f'{seq_id}_trrosetta.jpg'))
         
+def compare_probs(struct_to_seq_model, seq_model, struct, seq, decode_order, bayes_balance_factor=0.):
+    """Compare probability of residues under several models and return the distributions p(seq|struct), p(seq), 
+    and p(struct|seq) over each amino acid in the sequence
+    """
+    probs = []
+    current_seq = seq
+    for i in range(len(seq)):
+        # Decode this item last, so that there is a full bidirectional mlm context for xlnet and protein_mpnn
+        decode_order = np.append(np.delete(np.arange(len(seq)), i), i)
+        p_seq_struct = struct_to_seq_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=i).clone()
+        p_seq = seq_model([current_seq], decode_order=decode_order, token_to_decode=i, mask_type='bidirectional_mlm').clone()
+        p_seq_struct_div_p_seq = p_seq_struct / p_seq
+        p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
+        # For non-zero balance factor, return probabilities associated with balanced data
+        if bayes_balance_factor != 0:
+            p_seq_struct += bayes_balance_factor
+            p_seq += bayes_balance_factor
+            p_seq_struct_div_p_seq = p_seq_struct / p_seq
+            p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
+        probs.append((p_seq_struct, p_seq, p_struct_seq))
+
+    return probs
+
 def viz_probs(args):
     """Compare p(seq|struct)/p(seq), p(seq), and p(seq|struct), across all residues, highlighting top 1 in blue, second in green, third in red
     """
@@ -73,17 +96,22 @@ def viz_probs(args):
     
     fixed_position_mask = get_fixed_position_mask(fixed_position_list=args.fixed_positions, seq_len=len(seq))
     masked_seq = ''.join(['-' if not fixed else char for char, fixed in zip(seq, fixed_position_mask)])
-    
     # Decode order defines the order in which the masked positions are predicted
     decode_order = decode_order_dict[args.decode_order](masked_seq)
 
-    seq, probs = decode_algorithm_dict['compare'](struct_to_seq_model=protein_mpnn, seq_model=xlnet, struct=structure, seq=masked_seq, decode_order=decode_order, bayes_balance_factor=args.bayes_balance_factor)
+    if args.from_scratch:
+        # Mask the sequence only if designing a sequence from scratch
+        seq = masked_seq
+    else:
+        pass
+
+    probs = compare_probs(struct_to_seq_model=protein_mpnn, seq_model=xlnet, struct=structure, seq=seq, decode_order=decode_order, bayes_balance_factor=args.bayes_balance_factor)
     
     n_figures = 5
     # Plot 5 evenly-spaced probabilities
     spacing = len(args.sequence) // (n_figures - 1)
     indices = np.arange(0, len(args.sequence), spacing)
-
+    
     fig, ax = plt.subplots(n_figures, figsize=(23, 7))
 
     def color_top_scores(plot, probs):
@@ -107,6 +135,7 @@ def viz_probs(args):
         color_top_scores(plot=rects_2, probs=p_seq)
         rects_3 = ax[i].bar(x + 1.5*width, p_struct_seq, width, color='orange')
         color_top_scores(plot=rects_3, probs=p_struct_seq)
+        ax[i].set_ylabel("True residue: " + seq[idx])
     
     patch_1 = matplotlib.patches.Patch(color='orange', label='$left: p(seq|struct)$')
     patch_2 = matplotlib.patches.Patch(color='orange', label='$middle: p(seq)$')
