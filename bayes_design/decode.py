@@ -100,6 +100,10 @@ def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
     """
     This function works.
     """
+    if from_scratch:
+        mask_type = 'bidirectional_autoregressive'
+    else:
+        mask_type = 'bidirectional_mlm'
     current_seq = seq
     for idx in decode_order:
         if fixed_position_mask[idx] == True:
@@ -110,7 +114,7 @@ def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
             current_seq = list(current_seq)
             current_seq[idx] = '-'
             current_seq = ''.join(current_seq)
-        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx)
+        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx, mask_type=mask_type)
         next_item = torch.argmax(probs)
         aa = AMINO_ACID_ORDER[next_item]
         current_seq = list(current_seq)
@@ -122,6 +126,10 @@ def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
     """
     This function works
     """
+    if from_scratch:
+        mask_type = 'bidirectional_autoregressive'
+    else:
+        mask_type = 'bidirectional_mlm'
     current_seq = seq
     for idx in decode_order:
         if fixed_position_mask[idx] == True:
@@ -132,7 +140,7 @@ def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
             current_seq = list(current_seq)
             current_seq[idx] = '-'
             current_seq = ''.join(current_seq)
-        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx).detach().cpu().numpy()
+        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx, mask_type=mask_type).detach().cpu().numpy()
         next_item = np.random.choice(np.arange(20), p=probs)
         aa = AMINO_ACID_ORDER[next_item]
         current_seq = list(current_seq)
@@ -160,6 +168,10 @@ def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from
     """
     This function works.
     """    
+    if from_scratch:
+        mask_type = 'bidirectional_autoregressive'
+    else:
+        mask_type = 'bidirectional_mlm'
     top_candidates = [[list(seq), 0.0]]
     for j, decode_idx in enumerate(decode_order):
         print("j:", j)
@@ -173,7 +185,7 @@ def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from
                 current_seq = list(current_seq)
                 current_seq[decode_idx] = '-'
                 current_seq = ''.join(current_seq)
-            probs = prob_model(seq=[''.join(current_seq)], struct=struct, decode_order=decode_order, token_to_decode=decode_idx)[0].tolist()
+            probs = prob_model(seq=[''.join(current_seq)], struct=struct, decode_order=decode_order, token_to_decode=decode_idx, mask_type=mask_type)[0].tolist()
             for i, prob in enumerate(probs):
                 candidate_seq = current_seq.copy()
                 candidate_seq[decode_idx] = AMINO_ACID_ORDER[i]
@@ -184,7 +196,7 @@ def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from
         # Select n_beams best
         top_candidates = ordered[:n_beams]
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
-    return top_candidates[0]
+    return top_candidates[0][0]
 
 def beam_decode_medium(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
     """
@@ -195,6 +207,10 @@ def beam_decode_medium(prob_model, struct, seq, decode_order, fixed_position_mas
             current_seq[idx] = '-'
             current_seq = ''.join(current_seq)
     """
+    if from_scratch:
+        mask_type = 'bidirectional_autoregressive'
+    else:
+        mask_type = 'bidirectional_mlm'
     top_candidates = [[list(seq), 0.0]]
     for j, decode_idx in enumerate(decode_order):
         print("j:", j)
@@ -202,12 +218,10 @@ def beam_decode_medium(prob_model, struct, seq, decode_order, fixed_position_mas
         if fixed_position_mask[decode_idx] == True:
             continue
         top_sequences = [seq for seq, score in top_candidates]
-        # if not from_scratch:
-        #     for i in range(len(top_sequences)):
-        #         top_sequences[i][decode_idx] = '-'
-        #     # top_sequences[:][decode_idx] = '-'
-        #     import pdb; pdb.set_trace()
-        top_candidate_probs = prob_model(seq=[''.join(seq) for seq in top_sequences], struct=struct, decode_order=decode_order, token_to_decode=decode_idx)
+        if not from_scratch:
+            for i in range(len(top_sequences)):
+                top_sequences[i][decode_idx] = '-'
+        top_candidate_probs = prob_model(seq=[''.join(seq) for seq in top_sequences], struct=struct, decode_order=decode_order, token_to_decode=decode_idx, mask_type=mask_type)
         all_candidates = []
         for ((current_seq, score), next_aa_probs) in zip(top_candidates, top_candidate_probs):
             for i, prob in enumerate(next_aa_probs.tolist()):
@@ -220,7 +234,7 @@ def beam_decode_medium(prob_model, struct, seq, decode_order, fixed_position_mas
         # Select n_beams best
         top_candidates = ordered[:n_beams]
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
-    return top_candidates[0]
+    return top_candidates[0][0]
 
 def beam_decode_fast(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
     """
@@ -259,7 +273,7 @@ def beam_decode_fast(prob_model, struct, seq, decode_order, fixed_position_mask,
         top_candidates = [list(x) for x in zip(top_sequences, top_probs)]
 
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
-    return top_candidates[0]
+    return top_candidates[0][0]
 
 
 

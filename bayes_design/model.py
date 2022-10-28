@@ -292,8 +292,8 @@ class BayesStructModel(nn.Module):
 
         self.bayes_balance_factor = bayes_balance_factor
 
-    def forward(self, seq, struct, decode_order, token_to_decode):
-        p_seq = self.seq_model(seq=seq, decode_order=decode_order, token_to_decode=token_to_decode).clone()
+    def forward(self, seq, struct, decode_order, token_to_decode, mask_type='bidirectional_autoregressive'):
+        p_seq = self.seq_model(seq=seq, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
         p_seq_struct = self.seq_struct_model(seq=seq, struct=struct, decode_order=decode_order, token_to_decode=token_to_decode).clone()
 
         # unbalanced_logits = (p_seq_struct / p_seq)

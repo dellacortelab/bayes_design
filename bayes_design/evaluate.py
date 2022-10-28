@@ -61,18 +61,13 @@ def evaluate_rmsd(sequence, seq_to_struct_model, targ_struct):
     (measured by evaluate_log_prob).
     """
 
-def evaluate_perplexity(seq, prob_model, decode_order, structure=None, fixed_positions=None):
+def evaluate_perplexity(seq, prob_model, decode_order, structure=None, fixed_position_mask=None):
     """
     Evaluate the perplexity of the sequence under the model. If fixed positions are provided, they
     are excluded from the perplexity calculation.
     """
-    log_prob = evaluate_log_prob(seq=seq, prob_model=prob_model, decode_order=decode_order, structure=structure, fixed_positions=fixed_positions)
-    n_fixed_positions = 0
-    for i in range(len(fixed_positions) // 2):
-        begin = fixed_positions[2*i]
-        end = fixed_positions[2*i + 1]
-        n_fixed_in_range = begin - end + 1
-        n_fixed_positions += n_fixed_in_range
+    log_prob = evaluate_log_prob(seq=seq, prob_model=prob_model, decode_order=decode_order, structure=structure, fixed_position_mask=fixed_position_mask)
+    n_fixed_positions = fixed_position_mask.sum()
     n = len(seq) - n_fixed_positions
     perplexity = np.exp(-1/n*log_prob)
     return perplexity

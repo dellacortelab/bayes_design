@@ -220,14 +220,11 @@ python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_t
 ```
 python3 experiment.py compare_seq_metric --protein_id 1PIN --decode_order n_to_c --model_name bayes_design --metric log_prob --sequences QLPEGWEEKVDEETKEKIYYNKETKEITKEKMIC MLPEGWVKQRNPITGEDVCFNTLTHEMTKFEPQG KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG
 ```
-greedy redesign,            MLPQQWQKIKDKKTKKWKYYNKKTKEITEKKPIG
-greedy design + bayes,      TLPKGWVEVTDPVTKKKKYYNTITKEITEKKPIG
-beam redesign,              
-beam redesign + bayes, 
-old beam from scratch,      QLPEGWEEKVDEETKEKIYYNKETKEITKEKMIC
-current beam from scratch,  TLPKGWVEVIDKKTKKKKYKNTITKEETEKKPIG
-old greedy redesign from scratch, MLPEGWVKQRNPITGEDVCFNTLTHEMTKFEPQG
+greedy design from scratch,     VLPEIWKRQINPETNQEQYWNTKTHTTTKQKPQG
+greedy design redesign,         KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG
+beam design from scratch,       VLPQGWKQRKSPKTNKTIYENTITKTITSKKPIG
+beam design redesign,           KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG
 
 
 # greedy redesign, greedy design + bayes, beam redesign, beam redesign + bayes, old beam from scratch, 
-python3 experiment.py compare_seq_metric --protein_id 1PIN --decode_order n_to_c --model_name bayes_design --metric log_prob --sequences MLPQQWQKIKDKKTKKWKYYNKKTKEITEKKPIG TLPKGWVEVTDPVTKKKKYYNTITKEITEKKPIG MLPEGWVKQRNPITGEDVCFNTLTHEMTKFEPQG KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG
+python3 experiment.py compare_seq_metric --protein_id 1PIN --decode_order n_to_c --model_name bayes_design --metric log_prob --sequences KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG VLPEIWKRQINPETNQEQYWNTKTHTTTKQKPQG KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG VLPQGWKQRKSPKTNKTIYENTITKTITSKKPIG KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG
