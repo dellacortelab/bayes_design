@@ -22,6 +22,8 @@ compare_seq_probs_parser.add_argument('--model_name', help="The model to use for
 compare_seq_probs_parser.add_argument('--metric', help="The metric with which to evaluate the sequence", choices=list(metric_dict.keys()), default='log_prob')
 compare_seq_probs_parser.add_argument('--decode_order', help="The order to decode masked parts of the sequence", choices=list(decode_order_dict.keys()), default='n_to_c')
 compare_seq_probs_parser.add_argument('--fixed_positions', help="The beginnings and ends of residue ranges (includes endpoints [], 1-indexed) to remain fixed and not predicted, separated by spaces", nargs='*', type=int, default=[])
+compare_seq_probs_parser.add_argument('--bayes_balance_factor', help='A balancing factor to avoid a high probability ratio in the tails of the distribution. Suggested value: 0.002', default=0., type=float)
+compare_seq_probs_parser.add_argument('--from_scratch', help="Whether to treat a sequence as designed from scratch when computing metrics. Default is to condition on existing sequence from provided PDB file.", action="store_true")
 compare_seq_probs_parser.set_defaults(func=compare_seq_metric)
 
 compare_struct_probs_parser = subparsers.add_parser('compare_struct_probs')

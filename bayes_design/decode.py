@@ -105,7 +105,8 @@ def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
     else:
         mask_type = 'bidirectional_mlm'
     current_seq = seq
-    for idx in decode_order:
+    log_prob = 0
+    for i, idx in enumerate(decode_order):
         if fixed_position_mask[idx] == True:
             # Do not change this token
             continue
@@ -116,10 +117,12 @@ def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
             current_seq = ''.join(current_seq)
         probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx, mask_type=mask_type)
         next_item = torch.argmax(probs)
+        log_prob += np.log(np.max(probs.detach().cpu().numpy()))
         aa = AMINO_ACID_ORDER[next_item]
         current_seq = list(current_seq)
         current_seq[idx] = aa
         current_seq = ''.join(current_seq)
+    print("log prob:", log_prob)
     return current_seq
 
 def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):

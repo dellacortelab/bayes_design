@@ -68,95 +68,103 @@ class XLNetWrapper():
         # Mask '-' tokens
         
         if not hasattr(token_to_decode, '__len__'):
-            token_to_decode = [token_to_decode]
-
+            token_to_decode = torch.tensor([token_to_decode])
         n_tokens = len(token_to_decode)
-
-        # perm_mask should be the mask for content stream attention (allow items to see self), because the xlnet 
-        # implementation adds an identity matrix to perm_mask to get the query stream attention, where items are
+        
+        # perm_mask should be the mask for query stream attention (don't allow items to see self), because the xlnet 
+        # implementation subtracts an identity matrix to perm_mask to get the content stream attention, where items are
         # masked from seeing self. The target_mapping ensures that we use query stream attention when predicting
         # the target elements https://github.com/huggingface/transformers/blob/v4.23.1/src/transformers/models/xlnet/modeling_xlnet.py#L1172
+        # In query stream attention you should always be masked from yourself because tokens are always masked from themselves during training
         perm_mask = torch.ones((n_tokens, seq_len, seq_len), dtype=torch.float) # perm_mask[0, j, k] = 1 means that the jth token cannot see the kth token
-        if mask_type == 'unidirectional_autoregressive':
-            # Allow each token to see tokens preceding it in decode order
+        if mask_type == 'unidirectional_autoregressive': # Allow each token to see tokens preceding it in decode order
             for i, tok in enumerate(token_to_decode):
                 token_to_decode_idx = decode_order.index(tok)
-                # This is + 1 because we decide what the decoded item sees
-                for j, idx in enumerate(decode_order[:token_to_decode_idx + 1]):
-                    # This should be j+1, because we allow tokens to see themselves
-                    perm_mask[i, idx, decode_order[:j+1]] = 0.0
+                # +1 because we want to include the tokens that the token_to_decode can see
+                for j, idx in enumerate(decode_order[:token_to_decode_idx+1]):
+                    # This should be j, because we den't allow tokens to see themselves
+                    perm_mask[i, idx, decode_order[:j]] = 0.0
             # decode_order: [2, 1, 0]
             # i = 0 -> decode pos 2
-            #   j = 0, idx = 2  
-            #       perm_mask[0, 2, [2]] = 0
+            #   j = 0, idx = 2
             #           [1, 1, 1]
             #           [1, 1, 1]
-            #           [1, 1, 0]
+            #           [1, 1, 1]
             # i = 1 -> decode pos 1
             #   j = 0, idx = 2
-            #       perm_mask[1, 2, [2]] = 0.
             #   j = 1, idx = 1
-            #       perm_mask[1, 1, [2, 1]] = 0.
+            #       perm_mask[1, 1, [2]] = 0.
             #           [1, 1, 1]
-            #           [1, 0, 0]
             #           [1, 1, 0]
+            #           [1, 1, 1]
             # i = 2 -> decode pos 0
             #   j = 0, idx = 2
-            #       perm_mask[2, 2, [2]] = 0.
             #   j = 1, idx = 1
-            #       perm_mask[2, 1, [2, 1]] = 0.
+            #       perm_mask[2, 1, [2]] = 0.
             #           [1, 1, 1]
-            #           [1, 0, 0]
             #           [1, 1, 0]
+            #           [1, 1, 1]
             #   j = 2, idx = 0
-            #       perm_mask[2, 0, [2, 1, 0]] = 0.
-            #           [0, 0, 0]
+            #       perm_mask[2, 0, [2, 1]] = 0.
             #           [1, 0, 0]
             #           [1, 1, 0]
+            #           [1, 1, 1]
         elif mask_type == 'bidirectional_autoregressive':
             for i, tok in enumerate(token_to_decode):
                 token_to_decode_idx = decode_order.index(tok)
-                for prev_tok_1 in decode_order[:token_to_decode_idx]:
+                # Iterate over all tokens up to and including tok
+                for prev_tok_1 in decode_order[:token_to_decode_idx + 1]:
+                    # Iterate over all tokens preceding tok
                     for prev_tok_2 in decode_order[:token_to_decode_idx]:
-                        # Allow all tokens to see tokens preceding token_to_decode
+                        if prev_tok_1 == prev_tok_2:
+                            # Never let a token see itself in query-stream attention
+                            continue
+                        # Allow all tokens up to and including tok to see tokens preceding tok
                         perm_mask[i, prev_tok_1, prev_tok_2] = 0.0
-                perm_mask[i, tok, decode_order[:token_to_decode_idx+1]] = 0.0
+
             #       [1, 1, 1, 1]
+            #       [1, 1, 1, 1]
+            #       [1, 1, 1, 1]
+            #       [1, 1, 1, 1]
+            #
             #       [1, 1, 1, 1]
             #       [1, 1, 1, 1]
             #       [1, 1, 1, 0]
-            #
             #       [1, 1, 1, 1]
+            #
             #       [1, 1, 1, 1]
             #       [1, 1, 0, 0]
             #       [1, 1, 1, 0]
+            #       [1, 1, 0, 1]
             #
-            #       [1, 1, 1, 1]
             #       [1, 0, 0, 0]
             #       [1, 1, 0, 0]
-            #       [1, 1, 0, 0]
-            #
-            #       [0, 0, 0, 0]
-            #       [1, 0, 0, 0]
-            #       [1, 0, 0, 0]
-            #       [1, 0, 0, 0]
+            #       [1, 0, 1, 0]
+            #       [1, 0, 0, 1]
         elif mask_type == 'bidirectional_mlm':
             for i, tok in enumerate(token_to_decode):
-                perm_mask[i, :, np.arange(seq_len) != tok] = 0.0 # Allow full bidirectional context except for the decoded token (masked-language-model-style. this is not autoregressive)
-            # decode_order: [2, 1, 0]
-            # i = 0 -> decode pos 2
-            # perm_mask[0, :, [1, 0]] = 0.0
-            # i = 1 -> decode pos 1
-            # perm_mask[1, :, [2, 0]] = 0.0
-            # i = 2 -> decode pos 0
-            # perm_mask[2, :, [2, 1]] = 0.0
+                    perm_mask[i, :, torch.arange(seq_len) != tok] = 0.0 # Allow full bidirectional context (masked-language-model-style. this is not autoregressive)
+                    # In query stream attention, tokens are always masked from themselves
+                    perm_mask[i, torch.arange(seq_len), torch.arange(seq_len)] = 1.0
+
+                    # [1, 0, 1]
+                    # [0, 1, 1]
+                    # [0, 0, 1]
+
+                    # [1, 1, 0]
+                    # [0, 1, 0]
+                    # [0, 1, 1]
+                    
+                    # [1, 0, 0]
+                    # [1, 1, 0]
+                    # [1, 0, 1]
 
         target_mapping = torch.zeros(
             (n_tokens, 1, seq_len), dtype=torch.float
         )  # Shape [batch_size=n_tokens, num_tokens_to_predict=1, seq_length=n_tokens]
         for i, tok in enumerate(token_to_decode):
             target_mapping[i, 0, tok] = 1.0 # Predict the ith token
-
+            
         with torch.inference_mode():
             out = self.model(input_ids.to(self.device), perm_mask=perm_mask.to(self.device), target_mapping=target_mapping.to(self.device))
             # logits has shape [batch_size, 1, config.vocab_size]
@@ -164,7 +172,7 @@ class XLNetWrapper():
             # Ignore the last entry, corresponding to 'X'
             index_corrected_logits = index_corrected_logits[:, :-1]
             probs = torch.nn.functional.softmax(index_corrected_logits, dim=-1)
-        
+            
         return probs
 
 
@@ -295,7 +303,6 @@ class BayesStructModel(nn.Module):
     def forward(self, seq, struct, decode_order, token_to_decode, mask_type='bidirectional_autoregressive'):
         p_seq = self.seq_model(seq=seq, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
         p_seq_struct = self.seq_struct_model(seq=seq, struct=struct, decode_order=decode_order, token_to_decode=token_to_decode).clone()
-
         # unbalanced_logits = (p_seq_struct / p_seq)
         # p_struct_seq_1 = unbalanced_logits / unbalanced_logits.sum(dim=-1).unsqueeze(-1)
         # torch.set_printoptions(sci_mode=False)
@@ -315,6 +322,7 @@ class BayesStructModel(nn.Module):
         
         # Normalize probabilities
         p_struct_seq = balanced_logits / balanced_logits.sum(dim=-1).unsqueeze(-1)
+        # print(p_struct_seq)
         # print("seq struct")
         # print(p_seq_struct[0])
         # print('seq')

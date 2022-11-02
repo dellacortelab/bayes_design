@@ -12,7 +12,7 @@ from bayes_design.model import model_dict
 from bayes_design.utils import get_protein, AMINO_ACID_ORDER
 
 
-def evaluate_log_prob(seq, prob_model, decode_order, fixed_position_mask, structure=None):
+def evaluate_log_prob(seq, prob_model, decode_order, fixed_position_mask, mask_type, structure=None):
     """
     Evaluate the log probability of the structure for the sequence under a 
     sequence to structure model. This measures p(struct|seq) for a designed sequence.
@@ -41,7 +41,7 @@ def evaluate_log_prob(seq, prob_model, decode_order, fixed_position_mask, struct
     token_to_decode = torch.tensor(decode_order[n_fixed_positions:])
     input_seqs = [seq]*n_predicted_positions
 
-    probs = prob_model(seq=input_seqs, struct=structure, decode_order=decode_order, token_to_decode=token_to_decode)
+    probs = prob_model(seq=input_seqs, struct=structure, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type)
     log_prob = 0
     for i, idx in enumerate(token_to_decode):
         aa = seq[idx]
@@ -61,12 +61,12 @@ def evaluate_rmsd(sequence, seq_to_struct_model, targ_struct):
     (measured by evaluate_log_prob).
     """
 
-def evaluate_perplexity(seq, prob_model, decode_order, structure=None, fixed_position_mask=None):
+def evaluate_perplexity(seq, prob_model, decode_order, structure=None, fixed_position_mask=None, mask_type=None):
     """
     Evaluate the perplexity of the sequence under the model. If fixed positions are provided, they
     are excluded from the perplexity calculation.
     """
-    log_prob = evaluate_log_prob(seq=seq, prob_model=prob_model, decode_order=decode_order, structure=structure, fixed_position_mask=fixed_position_mask)
+    log_prob = evaluate_log_prob(seq=seq, prob_model=prob_model, decode_order=decode_order, structure=structure, fixed_position_mask=fixed_position_mask, mask_type=mask_type)
     n_fixed_positions = fixed_position_mask.sum()
     n = len(seq) - n_fixed_positions
     perplexity = np.exp(-1/n*log_prob)

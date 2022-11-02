@@ -208,23 +208,42 @@ python3 experiment.py viz_probs --protein_id 1PIN --decode_order n_to_c --fixed_
 python3 experiment.py compare_seq_metric --protein_id 1PIN --fixed_positions 34 34 --model_name protein_mpnn --metric perplexity --sequences KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG
 ```
 
-python3 design.py --model_name bayes_design --protein_id 5ibo --decode_order n_to_c --decode_algorithm beam_medium --n_beams 128 --fixed_positions 34 34
+python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --bayes_balance_factor .002 --decode_algorithm greedy --from_scratch
 
-python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --decode_algorithm greedy --fixed_positions 34 34 --bayes_balance_factor .002
+python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --bayes_balance_factor .002 --decode_algorithm greedy
 
-python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --decode_algorithm beam_medium --n_beams 128 --fixed_positions 34 34 --bayes_balance_factor .002
+python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --bayes_balance_factor .002  --decode_algorithm beam_medium --n_beams 128 --from_scratch
 
-python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --decode_algorithm beam_medium --n_beams 128 --fixed_positions 34 34 --bayes_balance_factor .002 --from_scratch
+python3 design.py --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --bayes_balance_factor .002 --decode_algorithm beam_medium --n_beams 128
 
 # Compare redesign design, from scratch design, wild type
 ```
 python3 experiment.py compare_seq_metric --protein_id 1PIN --decode_order n_to_c --model_name bayes_design --metric log_prob --sequences QLPEGWEEKVDEETKEKIYYNKETKEITKEKMIC MLPEGWVKQRNPITGEDVCFNTLTHEMTKFEPQG KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG
 ```
-greedy design from scratch,     VLPEIWKRQINPETNQEQYWNTKTHTTTKQKPQG
-greedy design redesign,         KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG
-beam design from scratch,       VLPQGWKQRKSPKTNKTIYENTITKTITSKKPIG
-beam design redesign,           KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG
+Redesign (masked language model) log probs
+original sequence               KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG  -132.4287656562372
+greedy design from scratch,     TLPEHWVKRKDPKTGQWIYENTKTHETLAQKWQG  -75.78690712339807
+beam design from scratch,       QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG  -56.61230037035647
+greedy design redesign,         KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG  -57.37638454560531
+beam design redesign,           KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG  -66.10766004597059 # It is possible for this to be higher than greedy because probabilities change as the sequence continues to be designed. This will be fixed with a new
+design algorithm
+
+From scratch (bidirectional autoregressive) log probs:
+original sequence               KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG  -111.97058678054292
+greedy design from scratch,     TLPEHWVKRKDPKTGQWIYENTKTHETLAQKWQG  -40.06295947692667
+beam design from scratch,       QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG  -31.762047139937724
+greedy design redesign,         KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG  -67.80643576157938 
+beam design redesign,           KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG  -58.47884559314369
+
+python3 experiment.py compare_seq_metric --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --bayes_balance_factor .002 --metric log_prob --sequences KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG TLPEHWVKRKDPKTGQWIYENTKTHETLAQKWQG KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG
+
+python3 experiment.py compare_seq_metric --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --bayes_balance_factor .002 --metric log_prob --sequences KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG TLPEHWVKRKDPKTGQWIYENTKTHETLAQKWQG KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG
 
 
-# greedy redesign, greedy design + bayes, beam redesign, beam redesign + bayes, old beam from scratch, 
-python3 experiment.py compare_seq_metric --protein_id 1PIN --decode_order n_to_c --model_name bayes_design --metric log_prob --sequences KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG VLPEIWKRQINPETNQEQYWNTKTHTTTKQKPQG KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG VLPQGWKQRKSPKTNKTIYENTITKTITSKKPIG KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG
+# One problem with using mlm redesign: Even if the probability increases for one token, that probability could be changed once we replace other tokens. So maybe V instead of K increases probability by .01, and then G instead of L increases probability by .01, but decreases probability of V by .2. Perhaps we should instead choose each token based on how it affects the log-likelihood of the whole sequence instead of just that token. argmax_aa p(struct=X|seq=seq:seq[i]=aa) vs argmax_aa p(struct=X|seq)
+
+This:   p(seq:seq[i]=aa|struct)/p(seq:seq[i]=aa)
+        = p(seq[i]=aa|struct, seq[!=i]=seq) p(seq[!=i]=seq|struct) /
+           ( p(seq[i]=aa|seq[!=i]=seq) p(seq[!=i]=seq) )
+
+Not this: p(seq[i]=aa|struct, seq[!=i]=seq)/p(seq[i]=aa|seq[!=i]=seq)

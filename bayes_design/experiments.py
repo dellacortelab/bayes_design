@@ -17,9 +17,18 @@ def compare_seq_metric(args):
     device = torch.device("cuda:1" if (torch.cuda.is_available()) else "cpu")
     fixed_position_mask = get_fixed_position_mask(fixed_position_list=args.fixed_positions, seq_len=len(seq))
     
-    prob_model = model_dict[args.model_name](device=device)
+    if args.from_scratch:
+        mask_type = 'bidirectional_autoregressive'
+    else:
+        mask_type = 'bidirectional_mlm'
+
+    if args.model_name == 'bayes_design':
+        prob_model = model_dict[args.model_name](device=device, bayes_balance_factor=args.bayes_balance_factor)
+    else:
+        prob_model = model_dict[args.model_name](device=device)
+        
     for seq in args.sequences:
-        metric = metric_dict[args.metric](seq=seq, prob_model=prob_model, decode_order=args.decode_order, structure=structure, fixed_position_mask=fixed_position_mask)
+        metric = metric_dict[args.metric](seq=seq, prob_model=prob_model, decode_order=args.decode_order, structure=structure, fixed_position_mask=fixed_position_mask, mask_type=mask_type)
         print(f'Metric {args.metric}:', metric)
 
 def compare_struct_probs(args):
