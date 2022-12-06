@@ -115,7 +115,7 @@ def viz_probs(args):
         pass
 
     probs = compare_probs(struct_to_seq_model=protein_mpnn, seq_model=xlnet, struct=structure, seq=seq, decode_order=decode_order, bayes_balance_factor=args.bayes_balance_factor)
-    
+
     n_figures = 5
     # Plot 5 evenly-spaced probabilities
     spacing = len(args.sequence) // (n_figures - 1)

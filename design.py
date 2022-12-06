@@ -15,7 +15,8 @@ parser.add_argument('--decode_algorithm', help="The algorithm used to decode mas
 parser.add_argument('--from_scratch', help="Whether to design a new sequence from scratch. Default is to condition on existing sequence from provided PDB file.", action="store_true")
 parser.add_argument('--fixed_positions', help="The beginnings and ends of residue ranges (includes endpoints [], 1-indexed) to remain fixed and not predicted, separated by spaces", nargs='*', type=int, default=[])
 parser.add_argument('--n_beams', help="The number of beams, if using beam search decoding", type=int, default=16)
-parser.add_argument('--bayes_balance_factor', help='A balancing factor to avoid a high probability ratio in the tails of the distribution. Suggested value: 0.002', default=0., type=float)
+parser.add_argument('--device', help="The GPU index to use", type=int, default=0)
+parser.add_argument('--bayes_balance_factor', help='A balancing factor to avoid a high probability ratio in the tails of the distribution. Suggested value: 0.002', default=0.002, type=float)
 subparsers = parser.add_subparsers(help="Whether to run an experiment instead of using the base design functionality")
 experiment_parser = subparsers.add_parser('experiment')
 experiment_parser.add_argument('--name', help='The name of the experiment to run')
@@ -23,8 +24,11 @@ experiment_parser.add_argument('--name', help='The name of the experiment to run
 
 def example_design(args):
     
-    device = torch.device("cuda:1" if (torch.cuda.is_available()) else "cpu")
+    if not args.from_scratch and (args.model_name == 'bayes_design' or args.model_name == 'protein_mpnn'):
+        raise ValueError("Masked language modeling is not yet supported for protein_mpnn.")
 
+    device = torch.device(f"cuda:{args.device}" if (torch.cuda.is_available()) else "cpu")
+    
     if args.model_name == 'bayes_design':
         prob_model = model_dict[args.model_name](device=device, bayes_balance_factor=args.bayes_balance_factor)
     else:

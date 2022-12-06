@@ -105,24 +105,20 @@ def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
     else:
         mask_type = 'bidirectional_mlm'
     current_seq = seq
-    log_prob = 0
+    log_probs = []
     for i, idx in enumerate(decode_order):
         if fixed_position_mask[idx] == True:
             # Do not change this token
             continue
-        if not from_scratch:
-            # Mask the current token being decoded
-            current_seq = list(current_seq)
-            current_seq[idx] = '-'
-            current_seq = ''.join(current_seq)
         probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx, mask_type=mask_type)
         next_item = torch.argmax(probs)
-        log_prob += np.log(np.max(probs.detach().cpu().numpy()))
+        log_probs.append(np.log(np.max(probs.detach().cpu().numpy())))
         aa = AMINO_ACID_ORDER[next_item]
         current_seq = list(current_seq)
         current_seq[idx] = aa
         current_seq = ''.join(current_seq)
-    print("log prob:", log_prob)
+    print("log probs:", log_probs)
+    print("log prob:", np.array(log_probs).sum())
     return current_seq
 
 def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
@@ -138,11 +134,6 @@ def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
         if fixed_position_mask[idx] == True:
             # Do not change this token
             continue
-        if not from_scratch:
-            # Mask the current token being decoded
-            current_seq = list(current_seq)
-            current_seq[idx] = '-'
-            current_seq = ''.join(current_seq)
         probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx, mask_type=mask_type).detach().cpu().numpy()
         next_item = np.random.choice(np.arange(20), p=probs)
         aa = AMINO_ACID_ORDER[next_item]
@@ -183,11 +174,6 @@ def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from
             continue
         all_candidates = []
         for (current_seq, score) in top_candidates:
-            if not from_scratch:
-                # Mask the current token being decoded
-                current_seq = list(current_seq)
-                current_seq[decode_idx] = '-'
-                current_seq = ''.join(current_seq)
             probs = prob_model(seq=[''.join(current_seq)], struct=struct, decode_order=decode_order, token_to_decode=decode_idx, mask_type=mask_type)[0].tolist()
             for i, prob in enumerate(probs):
                 candidate_seq = current_seq.copy()
@@ -203,37 +189,36 @@ def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from
 
 def beam_decode_medium(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
     """
-    This function works. TODO: Incorporate 
-        if not from_scratch:
-            # Mask the current token being decoded
-            current_seq = list(current_seq)
-            current_seq[idx] = '-'
-            current_seq = ''.join(current_seq)
+    This function works.
     """
     if from_scratch:
         mask_type = 'bidirectional_autoregressive'
     else:
         mask_type = 'bidirectional_mlm'
-    top_candidates = [[list(seq), 0.0]]
+    top_candidates = [[list(seq), [0.0]]]
     for j, decode_idx in enumerate(decode_order):
         print("j:", j)
         # If token is fixed, select the fixed token, regardless of probability
         if fixed_position_mask[decode_idx] == True:
             continue
         top_sequences = [seq for seq, score in top_candidates]
-        if not from_scratch:
-            for i in range(len(top_sequences)):
-                top_sequences[i][decode_idx] = '-'
-        top_candidate_probs = prob_model(seq=[''.join(seq) for seq in top_sequences], struct=struct, decode_order=decode_order, token_to_decode=decode_idx, mask_type=mask_type)
+        seqs = [''.join(seq) for seq in top_sequences]
+        # Chunk up predictions so they fit on one GPU
+        n_concurrent_seqs = 196
+        probs_list = []
+        for i in range(0, len(seqs), n_concurrent_seqs):
+            probs = prob_model.forward(seq=seqs[i:i + n_concurrent_seqs], struct=struct, decode_order=decode_order, token_to_decode=decode_idx, mask_type=mask_type)
+            probs_list.append(probs)
+        top_candidate_probs = torch.concat(probs_list, dim=0)
         all_candidates = []
         for ((current_seq, score), next_aa_probs) in zip(top_candidates, top_candidate_probs):
             for i, prob in enumerate(next_aa_probs.tolist()):
                 candidate_seq = current_seq.copy()
                 candidate_seq[decode_idx] = AMINO_ACID_ORDER[i]
-                candidate = [candidate_seq, score + log(prob)]
+                candidate = [candidate_seq, score + [log(prob)]]
                 all_candidates.append(candidate)
         # Order all candidates by log-prob (highest to lowest)
-        ordered = sorted(all_candidates, key=lambda tup:tup[1], reverse=True)
+        ordered = sorted(all_candidates, key=lambda tup:np.array(tup[1]).sum(), reverse=True)
         # Select n_beams best
         top_candidates = ordered[:n_beams]
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]

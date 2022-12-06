@@ -19,9 +19,9 @@ from tr_rosetta_pytorch.cli import DEFAULT_MODEL_PATH
 
 from .utils import AMINO_ACID_ORDER, get_protein
 
-class XLNetWrapper():
+class XLNetWrapper(nn.Module):
     def __init__(self, model_name='Rostlab/prot_xlnet', device=None):
-        
+        super().__init__()
         if device is not None:
             self.device = device
         elif torch.cuda.is_available():
@@ -38,7 +38,7 @@ class XLNetWrapper():
         xlnet_vocab_dict['▁X'] = xlnet_vocab_dict['X']
         self.canonical_idx_to_xlnet_idx = torch.tensor([xlnet_vocab_dict['▁' + aa] for aa in AMINO_ACID_ORDER])
 
-    def __call__(self, seq, decode_order, token_to_decode, struct=None, mask_type='bidirectional_autoregressive'):
+    def forward(self, seq, decode_order, token_to_decode, struct=None, mask_type='bidirectional_autoregressive'):
         """Accept an amino acid sequence, return class probabilities for the next token
         Args:
             seq (len 1 list of len L_seq str): a string representation of an amino 
@@ -141,23 +141,25 @@ class XLNetWrapper():
             #       [1, 1, 0, 0]
             #       [1, 0, 1, 0]
             #       [1, 0, 0, 1]
+            
+        # We should not use this option unless we get it working for ProteinMPNN as well
         elif mask_type == 'bidirectional_mlm':
             for i, tok in enumerate(token_to_decode):
-                    perm_mask[i, :, torch.arange(seq_len) != tok] = 0.0 # Allow full bidirectional context (masked-language-model-style. this is not autoregressive)
-                    # In query stream attention, tokens are always masked from themselves
-                    perm_mask[i, torch.arange(seq_len), torch.arange(seq_len)] = 1.0
+                perm_mask[i, :, torch.arange(seq_len) != tok] = 0.0 # Allow full bidirectional context (masked-language-model-style. this is not autoregressive)
+                # In query stream attention, tokens are always masked from themselves
+                perm_mask[i, torch.arange(seq_len), torch.arange(seq_len)] = 1.0
 
-                    # [1, 0, 1]
-                    # [0, 1, 1]
-                    # [0, 0, 1]
+                # [1, 0, 1]
+                # [0, 1, 1]
+                # [0, 0, 1]
 
-                    # [1, 1, 0]
-                    # [0, 1, 0]
-                    # [0, 1, 1]
-                    
-                    # [1, 0, 0]
-                    # [1, 1, 0]
-                    # [1, 0, 1]
+                # [1, 1, 0]
+                # [0, 1, 0]
+                # [0, 1, 1]
+                
+                # [1, 0, 0]
+                # [1, 1, 0]
+                # [1, 0, 1]
 
         target_mapping = torch.zeros(
             (n_tokens, 1, seq_len), dtype=torch.float
@@ -220,7 +222,7 @@ class ProteinMPNNWrapper(nn.Module):
         self.model.eval()
         print("Model loaded")
     
-    def forward(self, seq, struct, decode_order, token_to_decode):
+    def forward(self, seq, struct, decode_order, token_to_decode, mask_type):
         """Accept an amino acid sequence and protein structure 
         coordinates, return class probabilities for the next token
         Args:
@@ -251,10 +253,14 @@ class ProteinMPNNWrapper(nn.Module):
             chain_M = torch.ones(N, L).float().to(self.device)
             chain_encoding_all = torch.ones(N, L).float().to(self.device)
             residue_idx = torch.arange(L).expand(N, L).to(self.device)
-
-            # randn determines the decoding order. The indices in the randn vector with the lowest values will be decoded first
-            randn = torch.argsort(torch.tensor(decode_order)).to(self.device)
-            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, randn=randn, use_input_decoding_order=True, decoding_order=torch.tensor(decode_order).expand(N, L).to(self.device))
+            # decode_order = torch.tensor([[1, 0, 3, 2, 5, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]], device='cuda:0')
+            # if mask_type == 'bidirectional_mlm':
+            #     # order_mask_backward[i, j] = 1 means that token i can see token j. This is the reverse of XLNet
+            #     order_mask_backward = torch.zeros(1, 34, 34).to(self.device)
+            #     order_mask_backward[0, :, torch.arange(L) != token_to_decode] = 1.0 # Allow full bidirectional context (masked-language-model-style. this is not autoregressive)
+            #     # Tokens are always masked from themselves
+            #     order_mask_backward[0, torch.arange(L), torch.arange(L)] = 0.
+            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, decoding_order=torch.tensor(decode_order).expand(N, L).to(self.device))
             probs = torch.exp(log_probs)
             # N x L x 20
             # Ignore the last entry, corresponding to 'X', and normalize
@@ -273,6 +279,8 @@ class ProteinMPNNWrapper(nn.Module):
         #     bias_by_res = torch.zeros([N, L, len(AMINO_ACID_ORDER)]).to(self.device)
         #     # Predict tokens except 'X'
         #     omit_AAs_np = np.array([AA in ['X'] for AA in AMINO_ACID_ORDER]).astype(np.float32)
+        #     # randn determines the decoding order. The indices in the randn vector with the lowest values will be decoded first
+        #     randn = torch.argsort(torch.tensor(decode_order)).to(self.device)
         #     out = self.model.sample(X=struct, randn=randn, S_true=seq, chain_mask=chain_M, chain_encoding_all=chain_encoding_all, residue_idx=residue_idx, mask=mask, chain_M_pos=chain_M_pos, bias_AAs_np=bias_AAs_np, omit_AAs_np=omit_AAs_np, bias_by_res=bias_by_res)
         #     probs = out['probs']
         # # Return the probabilities for th 0th chain and the 0th residue
@@ -295,25 +303,14 @@ class BayesStructModel(nn.Module):
         else:
             self.device = torch.device('cpu')
 
-        self.seq_model = XLNetWrapper(**kwargs)
-        self.seq_struct_model = ProteinMPNNWrapper(**kwargs)
+        self.seq_model = XLNetWrapper(device=device, **kwargs)
+        self.seq_struct_model = ProteinMPNNWrapper(device=device, **kwargs)
 
         self.bayes_balance_factor = bayes_balance_factor
 
     def forward(self, seq, struct, decode_order, token_to_decode, mask_type='bidirectional_autoregressive'):
         p_seq = self.seq_model(seq=seq, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
-        p_seq_struct = self.seq_struct_model(seq=seq, struct=struct, decode_order=decode_order, token_to_decode=token_to_decode).clone()
-        # unbalanced_logits = (p_seq_struct / p_seq)
-        # p_struct_seq_1 = unbalanced_logits / unbalanced_logits.sum(dim=-1).unsqueeze(-1)
-        # torch.set_printoptions(sci_mode=False)
-        # print("seq struct")
-        # print(p_seq_struct[0])
-        # print('seq')
-        # print(p_seq[0])
-        # print('unbalanced logits')
-        # print((unbalanced_logits)[0])
-        # print('unbalanced normalized probs')
-        # print(p_struct_seq_1[0])
+        p_seq_struct = self.seq_struct_model(seq=seq, struct=struct, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
 
         # Add a "balance factor" so that we don't end up with large probability ratios at the tails of the distributions
         p_seq += self.bayes_balance_factor
@@ -322,16 +319,6 @@ class BayesStructModel(nn.Module):
         
         # Normalize probabilities
         p_struct_seq = balanced_logits / balanced_logits.sum(dim=-1).unsqueeze(-1)
-        # print(p_struct_seq)
-        # print("seq struct")
-        # print(p_seq_struct[0])
-        # print('seq')
-        # print(p_seq[0])
-        # print('balanced_logits')
-        # print((balanced_logits)[0])
-        # print('balanced normalized probs')
-        # print(p_struct_seq[0])
-        # import pdb; pdb.set_trace()
 
         return p_struct_seq
 
