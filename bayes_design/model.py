@@ -260,7 +260,7 @@ class ProteinMPNNWrapper(nn.Module):
             #     order_mask_backward[0, :, torch.arange(L) != token_to_decode] = 1.0 # Allow full bidirectional context (masked-language-model-style. this is not autoregressive)
             #     # Tokens are always masked from themselves
             #     order_mask_backward[0, torch.arange(L), torch.arange(L)] = 0.
-            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, decoding_order=torch.tensor(decode_order).expand(N, L).to(self.device))
+            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, randn=None, decoding_order=torch.tensor(decode_order).expand(N, L).to(self.device))
             probs = torch.exp(log_probs)
             # N x L x 20
             # Ignore the last entry, corresponding to 'X', and normalize
