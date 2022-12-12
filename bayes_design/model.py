@@ -253,13 +253,11 @@ class ProteinMPNNWrapper(nn.Module):
             chain_M = torch.ones(N, L).float().to(self.device)
             chain_encoding_all = torch.ones(N, L).float().to(self.device)
             residue_idx = torch.arange(L).expand(N, L).to(self.device)
-            # decode_order = torch.tensor([[1, 0, 3, 2, 5, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]], device='cuda:0')
+            # Todo: Add support for bidirectional language modeling. From experiments with the snippet below, 
+            # ProteinMPNN seems to be really bad at this, probably because it was not trained on bidirectional context.
             # if mask_type == 'bidirectional_mlm':
-            #     # order_mask_backward[i, j] = 1 means that token i can see token j. This is the reverse of XLNet
-            #     order_mask_backward = torch.zeros(1, 34, 34).to(self.device)
-            #     order_mask_backward[0, :, torch.arange(L) != token_to_decode] = 1.0 # Allow full bidirectional context (masked-language-model-style. this is not autoregressive)
-            #     # Tokens are always masked from themselves
-            #     order_mask_backward[0, torch.arange(L), torch.arange(L)] = 0.
+            #     order_mask_backward = (torch.ones(L, L, device=device) - torch.eye(L, device=device)).unsqueeze(0).repeat(N, 1, 1)
+            
             log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, randn=None, decoding_order=torch.tensor(decode_order).expand(N, L).to(self.device))
             probs = torch.exp(log_probs)
             # N x L x 20

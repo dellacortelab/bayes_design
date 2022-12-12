@@ -222,14 +222,6 @@ This:   p(seq:seq[i]=aa|struct)/p(seq:seq[i]=aa)
 Not this: p(seq[i]=aa|struct, seq[!=i]=seq)/p(seq[i]=aa|seq[!=i]=seq)
 
 # Price sequences - 1PIN (beta sheet) aka WW
-Redesign (masked language model) log probs
-original sequence               KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG  -132.4287656562372
-greedy design from scratch,     TLPEHWVKRKDPKTGQWIYENTKTHETLAQKWQG  -75.78690712339807
-beam design from scratch,       QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG  -56.61230037035647
-greedy design redesign,         KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG  -57.37638454560531
-beam 128 redesign,              KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG  -66.10766004597059
-beam 256 redesign,              QTWYGWVPIVDDKTGETKWLNKIEKKVTSKKPIG  -72.67333541164169
-beam 512 redesign,              QWWYGWVPIVDEKTGEEKAYNVLTKEVTSERPIG  -72.61332409869613 
 
 From scratch (bidirectional autoregressive) log probs:
 original sequence               KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG  -111.97058678054292
@@ -239,20 +231,29 @@ greedy design from scratch,     TLPEHWVKRKDPKTGQWIYENTKTHETLAQKWQG  -40.06295947
 beam 128 design from scratch,   QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG  -31.762047139937724
 beam 256 design from scratch,   QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG  -31.762047139937724
 beam 512 design from scratch,   QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG  -31.762047139937724
-greedy design redesign,         KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG  -67.80643576157938 
-beam 128 redesign,              KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG  -58.47884559314369
-beam 256 redesign,              QTWYGWVPIVDDKTGETKWLNKIEKKVTSKKPIG  -72.75775501869335
-beam 512 redesign,              QWWYGWVPIVDEKTGEEKAYNVLTKEVTSERPIG  -74.33388050353317
 
 ProteinMPNN
 greedy design from scratch,     TLPEGWVEVVDPETGEKKYYNTKTKEVTSEKPVG  
 beam 128 design from scratch,   KLPEGWVEKVDPKTGKKVYYNTKTKEITEEKPVG  
 beam 256 design from scratch,   KLPEGWVEKVDPKTGKKVYYNTKTKEITEEKPVG  
 beam 512 design from scratch,   KLPEGWVEKVDPKTGEKVYYNTKTKEITKEKPVG  
-Protein MPNN doesn't have a mode where you allow bidirectional context, so we do not include a masked-language-model
-redesign mode - is this true? If it isn't then we need to incorporate that in ProteinMPNN and by extension in BayesDesign
+
 
 # Price sequences 1COI (coiled coil) aka 1CW
+From scratch (bidirectional autoregressive) log probs:
+original sequence               KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG
+
+BayesDesign
+greedy design from scratch,     TLPEHWVKRKDPKTGQWIYENTKTHETLAQKWQG
+beam 128 design from scratch,   QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG
+beam 256 design from scratch,   QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG
+beam 512 design from scratch,   QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG
+
+ProteinMPNN
+greedy design from scratch,     TLPEGWVEVVDPETGEKKYYNTKTKEVTSEKPVG
+beam 128 design from scratch,   KLPEGWVEKVDPKTGKKVYYNTKTKEITEEKPVG  
+beam 256 design from scratch,   KLPEGWVEKVDPKTGKKVYYNTKTKEITEEKPVG  
+beam 512 design from scratch,   KLPEGWVEKVDPKTGEKVYYNTKTKEITKEKPVG  
 
 ## Price sequence design commands
 Greedy design from scratch BayesDesign
@@ -320,6 +321,42 @@ Beam 512 redesign ProteinMPNN
 python3 design.py --model_name protein_mpnn --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --decode_algorithm beam_medium --n_beams 512
 ```
 
+1CW
+
+Greedy design from scratch BayesDesign
+```
+python3 design.py --model_name bayes_design --protein_id 1coi --decode_order n_to_c --fixed_positions 29 29 --bayes_balance_factor .002 --decode_algorithm greedy --from_scratch
+```
+Beam 128 design from scratch BayesDesign
+```
+python3 design.py --model_name bayes_design --protein_id 1coi --decode_order n_to_c --fixed_positions 29 29 --bayes_balance_factor .002  --decode_algorithm beam_medium --n_beams 128 --from_scratch
+```
+Beam 256 design from scratch BayesDesign
+```
+python3 design.py --model_name bayes_design --protein_id 1coi --decode_order n_to_c --fixed_positions 29 29 --bayes_balance_factor .002  --decode_algorithm beam_medium --n_beams 256 --from_scratch
+```
+Beam 512 design from scratch BayesDesign
+```
+python3 design.py --model_name bayes_design --protein_id 1coi --decode_order n_to_c --fixed_positions 29 29 --bayes_balance_factor .002  --decode_algorithm beam_medium --n_beams 512 --from_scratch
+```
+
+Greedy design from scratch ProteinMPNN
+```
+python3 design.py --model_name protein_mpnn --protein_id 1coi --decode_order n_to_c --fixed_positions 29 29  --decode_algorithm greedy --from_scratch
+```
+Beam 128 design from scratch ProteinMPNN
+```
+python3 design.py --model_name protein_mpnn --protein_id 1coi --decode_order n_to_c --fixed_positions 29 29   --decode_algorithm beam_medium --n_beams 128 --from_scratch
+```
+Beam 256 design from scratch ProteinMPNN
+```
+python3 design.py --model_name protein_mpnn --protein_id 1coi --decode_order n_to_c --fixed_positions 29 29   --decode_algorithm beam_medium --n_beams 256 --from_scratch
+```
+Beam 512 design from scratch ProteinMPNN
+```
+python3 design.py --model_name protein_mpnn --protein_id 1coi --decode_order n_to_c --fixed_positions 29 29   --decode_algorithm beam_medium --n_beams 512 --from_scratch
+```
+
 ## Price sequence evaluation commands
 python3 experiment.py compare_seq_metric --model_name bayes_design --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --bayes_balance_factor .002 --metric log_prob --sequences KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG TLPEHWVKRKDPKTGQWIYENTKTHETLAQKWQG KTPEWWWPIINKWTMETMYYNTGTNEVTKEKPIG QLPEGWVKRTNKVTGKDEYRNVKTNETTSKKPIG KTWYGWVPIVDFKTGEEMYRNDLTNEITRDKPIG QTWYGWVPIVDDKTGETKWLNKIEKKVTSKKPIG QWWYGWVPIVDEKTGEEKAYNVLTKEVTSERPIG
 
@@ -380,3 +417,55 @@ python3 experiment.py compare_seq_metric --model_name bayes_design --protein_id 
 python3 experiment.py compare_seq_metric --model_name bayes_design --protein_id nanoluc --decode_order proximity --bayes_balance_factor .002 --metric log_prob --sequences MWSHPQFEKVFTLEDFVGDWRQTAGYNLDQVLEQGGVSSLFQNLGVSVTPIQRIVLSGENGLKIDIHVIIPYEGLSGDQMGQIEKIFKVVYPVDDHHFKVILHYGTLVIDGVTPNMIDYFGRPYEGIAVFDGKKITVTGTLWNGNKIIDERLINPDGSLLFRVTINGVTGWRLCERILA MWSHPQFEKVFTLEDFVGDWRMVKQWNLPAVLKAMGVPQFMINLFCQTTPILRITLSGENGLKIDIEMIIPKKGLTCDQMNQIKKIFKHVEDVDDNNFKVILHYGTLVIDGVTPNMKDWFGRPYEGICKFDGKKITVTGTLWNGNKIIDEFEILPDGSLLFRVTVNGVEGWMIYERVEP --fixed_positions 1 9 8 14 17 17 49 51 57 64 98 108 110 116 120 127 132 139 142 150 156 158 160 162 14 14 21 21 28 28 37 37 43 43 53 54 64 64 78 78 82 82 85 85 100 100 125 125 134 134 148 148 176 176
 
 python3 experiment.py compare_seq_metric --model_name bayes_design --protein_id nanoluc --decode_order proximity --bayes_balance_factor .002 --metric log_prob --from_scratch --sequences MWSHPQFEKVFTLEDFVGDWRQTAGYNLDQVLEQGGVSSLFQNLGVSVTPIQRIVLSGENGLKIDIHVIIPYEGLSGDQMGQIEKIFKVVYPVDDHHFKVILHYGTLVIDGVTPNMIDYFGRPYEGIAVFDGKKITVTGTLWNGNKIIDERLINPDGSLLFRVTINGVTGWRLCERILA MWSHPQFEKVFTLEDFVGDWREVDRWNLADVLKAMGVPQFLINLYMSCTPIWRITKSGENGLKIDVEMIIPKQGLTEDQLQQIKKIFQHVEDVDDNHFKVILHYGTLVIDGVTPNMKDWFGRPYEGICKFDGKKITVTGTLWNGNKIIDEFEILPDGSLLFRTTVNGVTGYRILERVEP --fixed_positions 1 9 8 14 17 17 49 51 57 64 98 108 110 116 120 127 132 139 142 150 156 158 160 162 14 14 21 21 28 28 37 37 43 43 53 54 64 64 78 78 82 82 85 85 100 100 125 125 134 134 148 148 176 176
+
+# Moody lab design
+
+# Moody sequences
+From scratch (bidirectional autoregressive) log probs:
+original sequence               SATHIKFSKRDEDGKELAGATMELRDSSGKTISTWISDGQVKDFYLYPGKYTFVETAAPDGYEVATAITFGHHHHHHHHHH
+
+BayesDesign
+greedy design from scratch,     MPHEVRYEKRDSNGRLVKGYNWSLLDAEFNVIATWVSDGKPKYFMLPDGIYTWVETQAPPGYPKQPDVTFGHHHHHHHHHH
+beam 128 design from scratch,   GKQHVEIRKVDKNGRLLKGAKWELLNSEGDVIDQWISDGRPKHFWLPWGHYTLRETEPMPGFPKRPPETFGHHHHHHHHHH
+beam 256 design from scratch,   
+beam 512 design from scratch,   
+
+ProteinMPNN                     
+greedy design from scratch,     SLEKVTIKKVDSNGNLLSGAKWELLDENGNVIKTWTSDGKPKEFELPPGIYTVKETEAPAGYSKAADETFGHHHHHHHHHH
+beam 128 design from scratch,   EKKKVTIEKKDENGNLLKGAKWELLNEKGEVIEEWTSDGKPKEFELPEGIYTVKETEAPEGYEKKEPETFGHHHHHHHHHH
+beam 256 design from scratch,     
+beam 512 design from scratch,   
+  
+Greedy design from scratch BayesDesign
+```[]
+python3 design.py --model_name bayes_design --protein_id spycatcher --decode_order n_to_c --fixed_positions 9 9 55 55 72 81 --bayes_balance_factor .002 --decode_algorithm greedy --from_scratch
+```
+Beam 128 design from scratch BayesDesign
+```
+python3 design.py --model_name bayes_design --protein_id spycatcher --decode_order n_to_c --fixed_positions 9 9 55 55 72 81 --bayes_balance_factor .002  --decode_algorithm beam_medium --n_beams 128 --from_scratch
+```
+Beam 256 design from scratch BayesDesign
+```
+python3 design.py --model_name bayes_design --protein_id spycatcher --decode_order n_to_c --fixed_positions 9 9 55 55 72 81 --bayes_balance_factor .002  --decode_algorithm beam_medium --n_beams 256 --from_scratch
+```
+Beam 512 design from scratch BayesDesign
+```
+python3 design.py --model_name bayes_design --protein_id spycatcher --decode_order n_to_c --fixed_positions 9 9 55 55 72 81 --bayes_balance_factor .002  --decode_algorithm beam_medium --n_beams 512 --from_scratch
+```
+
+Greedy design from scratch ProteinMPNN
+```
+python3 design.py --model_name protein_mpnn --protein_id spycatcher --decode_order n_to_c --fixed_positions 9 9 55 55 72 81 --decode_algorithm greedy --from_scratch
+```
+Beam 128 design from scratch ProteinMPNN
+```
+python3 design.py --model_name protein_mpnn --protein_id spycatcher --decode_order n_to_c --fixed_positions 9 9 55 55 72 81 --decode_algorithm beam_medium --n_beams 128 --from_scratch
+```
+Beam 256 design from scratch ProteinMPNN
+```
+python3 design.py --model_name protein_mpnn --protein_id spycatcher --decode_order n_to_c --fixed_positions 9 9 55 55 72 81 --decode_algorithm beam_medium --n_beams 256 --from_scratch
+```
+Beam 512 design from scratch ProteinMPNN
+```
+python3 design.py --model_name protein_mpnn --protein_id spycatcher --decode_order n_to_c --fixed_positions 9 9 55 55 72 81 --decode_algorithm beam_medium --n_beams 512 --from_scratch
+```

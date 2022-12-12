@@ -75,13 +75,15 @@ def compare_probs(struct_to_seq_model, seq_model, struct, seq, decode_order, bay
     """Compare probability of residues under several models and return the distributions p(seq|struct), p(seq), 
     and p(struct|seq) over each amino acid in the sequence
     """
+    mask_type = 'bidirectional_mlm'
     probs = []
     current_seq = seq
     for i in range(len(seq)):
         # Decode this item last, so that there is a full bidirectional mlm context for xlnet and protein_mpnn
         decode_order = np.append(np.delete(np.arange(len(seq)), i), i)
-        p_seq_struct = struct_to_seq_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=i).clone()
-        p_seq = seq_model([current_seq], decode_order=decode_order, token_to_decode=i, mask_type='bidirectional_mlm').clone()
+        decode_order = decode_order.tolist()
+        p_seq_struct = struct_to_seq_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=i, mask_type=mask_type).clone()
+        p_seq = seq_model([current_seq], decode_order=decode_order, token_to_decode=i, mask_type=mask_type).clone()
         p_seq_struct_div_p_seq = p_seq_struct / p_seq
         p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
         # For non-zero balance factor, return probabilities associated with balanced data
