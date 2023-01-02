@@ -2,22 +2,11 @@ import re
 import torch
 from torch import nn
 import numpy as np
-import matplotlib.pyplot as plt
-import shutil
-import warnings
-import numpy as np
 import torch
-import random
-import os.path
-from pathlib import Path
-import subprocess
 from transformers import XLNetTokenizer, XLNetLMHeadModel
 from protein_mpnn_utils import ProteinMPNN
-from tr_rosetta_pytorch import trRosettaNetwork
-from tr_rosetta_pytorch.utils import preprocess
-from tr_rosetta_pytorch.cli import DEFAULT_MODEL_PATH
 
-from .utils import AMINO_ACID_ORDER, get_protein
+from .utils import AMINO_ACID_ORDER
 
 class XLNetWrapper(nn.Module):
     def __init__(self, model_name='Rostlab/prot_xlnet', device=None):
@@ -51,13 +40,7 @@ class XLNetWrapper(nn.Module):
         Returns:
             probs ((20) torch.Tensor): a vector of probabilities for the next
                 token
-        """
-        # When using bidirection autoregressive, we should get the same probabilities whether providing the whole sequence
-        # or the masked sequence, because the permutation mask protects us.
-        # When using unidirectional autoregressive, we should get the same probabilities as well.
-        # When using bidirectional mlm, we should get different probabilities as we take advantage of the provided
-        # future context in one case and not the other
-        
+        """        
         # Replace rare amino acids with "X"
         seq = [re.sub(r"[UZOB]", "X", s) for s in seq]
         # Huggingface XLNet expects a space-separated sequence
@@ -70,7 +53,7 @@ class XLNetWrapper(nn.Module):
         n_tokens = len(token_to_decode)
         
         # perm_mask should be the mask for query stream attention (don't allow items to see self), because the xlnet 
-        # implementation subtracts an identity matrix to perm_mask to get the content stream attention, where items are
+        # implementation subtracts an identity matrix from perm_mask to get the content stream attention, where items are
         # masked from seeing self. The target_mapping ensures that we use query stream attention when predicting
         # the target elements https://github.com/huggingface/transformers/blob/v4.23.1/src/transformers/models/xlnet/modeling_xlnet.py#L1172
         # In query stream attention you should always be masked from yourself because tokens are always masked from themselves during training
@@ -80,7 +63,6 @@ class XLNetWrapper(nn.Module):
                 token_to_decode_idx = decode_order.index(tok)
                 # +1 because we want to include the tokens that the token_to_decode can see
                 for j, idx in enumerate(decode_order[:token_to_decode_idx+1]):
-                    # This should be j, because we den't allow tokens to see themselves
                     perm_mask[i, idx, decode_order[:j]] = 0.0
             # decode_order: [2, 1, 0]
             # i = 0 -> decode pos 2
@@ -140,7 +122,6 @@ class XLNetWrapper(nn.Module):
             #       [1, 0, 1, 0]
             #       [1, 0, 0, 1]
             
-        # We should not use this option unless we get it working for ProteinMPNN as well
         elif mask_type == 'bidirectional_mlm':
             for i, tok in enumerate(token_to_decode):
                 perm_mask[i, :, torch.arange(seq_len) != tok] = 0.0 # Allow full bidirectional context (masked-language-model-style. this is not autoregressive)
@@ -242,8 +223,8 @@ class ProteinMPNNWrapper(nn.Module):
             chain_M = torch.ones(N, L).float().to(self.device)
             chain_encoding_all = torch.ones(N, L).float().to(self.device)
             residue_idx = torch.arange(L).expand(N, L).to(self.device)
-            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, randn=None, decoding_order=decode_order.to(self.device))
 
+            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, randn=None, decoding_order=decode_order.to(self.device))
 
             probs = torch.exp(log_probs)
             # N x L x 20
@@ -253,20 +234,7 @@ class ProteinMPNNWrapper(nn.Module):
         return probs[range(len(token_to_decode)), token_to_decode]
         # N x 20
 
-        #     # Required for sampling
-        #     chain_M_pos = torch.ones(N, L).float().to(self.device)
-        #     bias_AAs_np = np.zeros(len(AMINO_ACID_ORDER))
-        #     bias_by_res = torch.zeros([N, L, len(AMINO_ACID_ORDER)]).to(self.device)
-        #     # Predict tokens except 'X'
-        #     omit_AAs_np = np.array([AA in ['X'] for AA in AMINO_ACID_ORDER]).astype(np.float32)
-        #     # randn determines the decoding order. The indices in the randn vector with the lowest values will be decoded first
-        #     randn = torch.argsort(torch.tensor(decode_order)).to(self.device)
-        #     out = self.model.sample(X=struct, randn=randn, S_true=seq, chain_mask=chain_M, chain_encoding_all=chain_encoding_all, residue_idx=residue_idx, mask=mask, chain_M_pos=chain_M_pos, bias_AAs_np=bias_AAs_np, omit_AAs_np=omit_AAs_np, bias_by_res=bias_by_res)
-        #     probs = out['probs']
-        # # Return the probabilities for th 0th chain and the 0th residue
-        # return probs[:, token_to_decode]
-
-class BayesStructModel(nn.Module):
+class BayesDesign(nn.Module):
     def __init__(self, device=None, bayes_balance_factor=0.002, **kwargs):
         super().__init__()
         if device is not None:
@@ -295,106 +263,5 @@ class BayesStructModel(nn.Module):
 
         return p_struct_seq
 
-class TrRosettaWrapper():
-    def __init__(self, data_location='/data/msa', database='/data/uniref30/UniRef30_2022_02', device=None):
 
-        if device is not None:
-            self.device = device
-        elif torch.cuda.is_available():
-            self.device = torch.device("cuda:0")
-        else:
-            self.device = torch.device('cpu')
-        
-        model_files = [*Path(DEFAULT_MODEL_PATH).glob('*.pt')]
-        self.models = []
-        for model_file in model_files[:1]:
-            trrosetta = trRosettaNetwork(
-                filters = 64,
-                kernel = 3,
-                num_layers = 61
-            ).to(self.device)
-            trrosetta.load_state_dict(torch.load(model_file, map_location=self.device))
-            trrosetta.eval()
-            self.models.append(trrosetta)
-
-        self.data_location = data_location
-        os.makedirs(self.data_location, exist_ok=True)
-
-        self.database = database
-
-    def __call__(self, seq, seq_id):
-        """Pass a sequence through the trRosetta model and return the distogram
-        Args:
-            seq (str): a space-separated string representing the amino acid sequence
-        Returns:
-            distance ((L x L x 37) torch.Tensor): a distogram representing distance bin probabilities
-        """
-        seq_path = os.path.join(self.data_location, f'{seq_id}.txt')
-        seq_msa_path = os.path.join(self.data_location, f'{seq_id}_msa.txt')
-        # Make a fasta file with the sequence
-        with open(seq_path, 'w') as f:
-            f.write('>\n' + ''.join(seq.split()))
-        # Get an MSA for the sequence
-        if not os.path.exists(seq_msa_path):
-            out = subprocess.run(['/root/hh-suite/bin/hhblits', '-i', f'{seq_path}', '-oa3m', f'{seq_msa_path}', '-d', f'{self.database}'])
-        x = preprocess(seq_msa_path).to(self.device)
-        outputs = []
-        with torch.no_grad():
-            for model in self.models:
-                output = model(x)
-                outputs.append(output)
-            averaged_outputs = [torch.stack(model_output).mean(dim=0).cpu().numpy().squeeze(0).transpose(1,2,0) for model_output in zip(*outputs)]
-            # prob_theta, prob_phi, prob_distance, prob_omega
-            output_dict = dict(zip(['theta', 'phi', 'dist', 'omega'], averaged_outputs))
-            distance = output_dict['dist']
-            distance = distance.squeeze()
-
-        return distance
-
-def test_xlnet_wrapper():
-    import random
-
-    seq, struct = get_protein()
-    seq = seq[:10]
-    given_characters_up_to = 5
-    seq = ''.join([char if i < given_characters_up_to else '-' for i, char in enumerate(seq)])
-
-    xlnet = XLNetWrapper()
-
-    decoding_order = np.arange(len(seq)).tolist()
-    random.shuffle(decoding_order)
-    out_probs = xlnet(seq, decoding_order=decoding_order, token_to_decode=given_characters_up_to)
-
-def test_protein_mpnn_wrapper():
-    seq, struct = get_protein()
-    given_characters_up_to = 20
-    seq = ''.join([char if i < given_characters_up_to else '-' for i, char in enumerate(seq)])
-
-    mpnn = ProteinMPNNWrapper()
-    decoding_order = np.arange(len(seq)).tolist()
-    out_probs = mpnn(seq=seq, struct=struct, decoding_order=decoding_order, token_to_decode=given_characters_up_to)
-
-
-
-class TransformerXLU100Wrapper(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self):
-        pass
-
-class ProGenWrapper(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self):
-        pass
-
-class ESMIF1Wrapper(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self):
-        pass
-
-model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesStructModel, 'trRosetta':TrRosettaWrapper}
+model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign}

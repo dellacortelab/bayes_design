@@ -1,6 +1,5 @@
 import argparse
 import torch
-import numpy as np
 
 from bayes_design.decode import decode_order_dict, decode_algorithm_dict
 from bayes_design.model import model_dict
@@ -12,9 +11,9 @@ parser.add_argument('--model_name', help="The model to use for protein sequence 
 parser.add_argument('--protein_id', help="The PDB id of the protein to redesign", default='6MRR')
 parser.add_argument('--decode_order', help="The order to decode masked parts of the sequence", choices=list(decode_order_dict.keys()), default='n_to_c')
 parser.add_argument('--decode_algorithm', help="The algorithm used to decode masked parts of the sequence", choices=list(decode_algorithm_dict.keys()), default='beam')
-parser.add_argument('--from_scratch', help="Whether to design a new sequence from scratch. Default is to condition on existing sequence from provided PDB file.", action="store_true")
-parser.add_argument('--fixed_positions', help="The beginnings and ends of residue ranges (includes endpoints [], 1-indexed) to remain fixed and not predicted, separated by spaces", nargs='*', type=int, default=[])
+parser.add_argument('--fixed_positions', help="The beginnings and ends of residue ranges (includes endpoints [], 1-indexed) to remain fixed and not predicted, separated by spaces. Example: 3 10 14 14 17 20", nargs='*', type=int, default=[])
 parser.add_argument('--n_beams', help="The number of beams, if using beam search decoding", type=int, default=16)
+parser.add_argument('--redesign', help="Whether to redesign an existing sequence, using the existing sequence as bidirectional context. Default is to design from scratch.", action="store_true")
 parser.add_argument('--device', help="The GPU index to use", type=int, default=0)
 parser.add_argument('--bayes_balance_factor', help='A balancing factor to avoid a high probability ratio in the tails of the distribution. Suggested value: 0.002', default=0.002, type=float)
 subparsers = parser.add_subparsers(help="Whether to run an experiment instead of using the base design functionality")
@@ -40,18 +39,19 @@ def example_design(args):
 
     # Decode order defines the order in which the masked positions are predicted
     decode_order = decode_order_dict[args.decode_order](masked_seq)
-
-    if args.from_scratch:
-        # Mask the sequence only if designing a sequence from scratch
-        seq = masked_seq
-    else:
+    
+    if args.redesign:
         pass
+    else:
+        seq = masked_seq
+    
+    from_scratch = not args.redesign
     
     # The decoding algorithm determines how the sequence is decoded
     if 'beam' in args.decode_algorithm:
-        designed_seq = decode_algorithm_dict[args.decode_algorithm](prob_model=prob_model, struct=struct, seq=seq, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=args.from_scratch, n_beams=args.n_beams)
+        designed_seq = decode_algorithm_dict[args.decode_algorithm](prob_model=prob_model, struct=struct, seq=seq, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=from_scratch, n_beams=args.n_beams)
     else:
-        designed_seq = decode_algorithm_dict[args.decode_algorithm](prob_model=prob_model, struct=struct, seq=seq, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=args.from_scratch)
+        designed_seq = decode_algorithm_dict[args.decode_algorithm](prob_model=prob_model, struct=struct, seq=seq, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=from_scratch)
 
     return orig_seq, masked_seq, designed_seq
 
