@@ -39,12 +39,12 @@ def evaluate_log_prob(seq, prob_model, decode_order, fixed_position_mask, mask_t
     # Decode order defines the order in which the masked positions are predicted
     decode_order = decode_order_dict[decode_order](masked_seq)
     token_to_decode = torch.tensor(decode_order[n_fixed_positions:])
-    input_seqs = [seq]*n_predicted_positions
 
-    probs = prob_model(seq=input_seqs, struct=structure, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type)
+    probs = prob_model(seq=[seq]*n_predicted_positions, struct=structure, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type)
+    
     log_prob = 0
-    for i, idx in enumerate(token_to_decode):
-        aa = seq[idx]
+    for i, tok in enumerate(token_to_decode):
+        aa = seq[tok]
         seq_idx = AMINO_ACID_ORDER.index(aa)
         log_prob += math.log(probs[i, seq_idx])
     

@@ -23,9 +23,6 @@ experiment_parser.add_argument('--name', help='The name of the experiment to run
 
 
 def example_design(args):
-    
-    if not args.from_scratch and (args.model_name == 'bayes_design' or args.model_name == 'protein_mpnn'):
-        raise ValueError("Masked language modeling is not yet supported for protein_mpnn.")
 
     device = torch.device(f"cuda:{args.device}" if (torch.cuda.is_available()) else "cpu")
     

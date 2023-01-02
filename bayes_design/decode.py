@@ -174,7 +174,7 @@ def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from
             continue
         all_candidates = []
         for (current_seq, score) in top_candidates:
-            probs = prob_model(seq=[''.join(current_seq)], struct=struct, decode_order=decode_order, token_to_decode=decode_idx, mask_type=mask_type)[0].tolist()
+            probs = prob_model(seq=[''.join(current_seq)], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([decode_idx]), mask_type=mask_type)[0].tolist()
             for i, prob in enumerate(probs):
                 candidate_seq = current_seq.copy()
                 candidate_seq[decode_idx] = AMINO_ACID_ORDER[i]
@@ -207,7 +207,7 @@ def beam_decode_medium(prob_model, struct, seq, decode_order, fixed_position_mas
         n_concurrent_seqs = 196
         probs_list = []
         for i in range(0, len(seqs), n_concurrent_seqs):
-            probs = prob_model.forward(seq=seqs[i:i + n_concurrent_seqs], struct=struct, decode_order=decode_order, token_to_decode=decode_idx, mask_type=mask_type)
+            probs = prob_model.forward(seq=seqs[i:i + n_concurrent_seqs], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([decode_idx]).expand(len(seqs)), mask_type=mask_type)
             probs_list.append(probs)
         top_candidate_probs = torch.concat(probs_list, dim=0)
         all_candidates = []
@@ -234,7 +234,7 @@ def beam_decode_fast(prob_model, struct, seq, decode_order, fixed_position_mask,
         print("j:", j)
         top_sequences = [seq for seq, score in top_candidates]
         # top_sequences: n_beams x L
-        probs = prob_model(seq=[''.join(seq) for seq in top_sequences], struct=struct, decode_order=decode_order, token_to_decode=decode_idx)
+        probs = prob_model(seq=[''.join(seq) for seq in top_sequences], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor(decode_idx))
         # probs: n_beams x 21
         proposed_sequences = np.array(top_sequences)
         proposed_sequences = np.repeat(proposed_sequences[:, np.newaxis, :], len(AMINO_ACID_ORDER), axis=1)

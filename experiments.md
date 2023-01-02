@@ -204,6 +204,7 @@ python3 experiment.py viz_probs --protein_id 1PIN --decode_order n_to_c --fixed_
 python3 experiment.py viz_probs --protein_id 1PIN --decode_order n_to_c --fixed_positions 34 34 --sequence KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG --results_path ./results/probs_viz_KLPP_bayes_002 --bayes_balance_factor .002
 ```
 ### Evaluate perplexity
+python3 experiment.py compare_seq_metric --protein_id 1PIN --fixed_positions 34 34 --model_name protein_mpnn --metric perplexity --sequences KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG ELPEGWEERVDPKTGKKIYYNTKTKEITEEKPVK KLPEGWVEKVDPKTGKKVYYNTKTKEITEEKPIG
 ```
 python3 experiment.py compare_seq_metric --protein_id 1PIN --fixed_positions 34 34 --model_name protein_mpnn --metric perplexity --sequences KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG
 ```
@@ -433,7 +434,7 @@ beam 512 design from scratch,
 ProteinMPNN                     
 greedy design from scratch,     SLEKVTIKKVDSNGNLLSGAKWELLDENGNVIKTWTSDGKPKEFELPPGIYTVKETEAPAGYSKAADETFGHHHHHHHHHH
 beam 128 design from scratch,   EKKKVTIEKKDENGNLLKGAKWELLNEKGEVIEEWTSDGKPKEFELPEGIYTVKETEAPEGYEKKEPETFGHHHHHHHHHH
-beam 256 design from scratch,     
+beam 256 design from scratch,   
 beam 512 design from scratch,   
   
 Greedy design from scratch BayesDesign

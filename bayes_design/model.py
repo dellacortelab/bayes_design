@@ -41,13 +41,13 @@ class XLNetWrapper(nn.Module):
     def forward(self, seq, decode_order, token_to_decode, struct=None, mask_type='bidirectional_autoregressive'):
         """Accept an amino acid sequence, return class probabilities for the next token
         Args:
-            seq (len 1 list of len L_seq str): a string representation of an amino 
+            seq (len N list of len L_seq str): a string representation of an amino 
                 acid sequence with unknown residues indicated with a dash (-)
             decode_order (len L list): list of the order of indices to decode.
                 This determines the values in the permutation mask. Each index 
                 attends to all indices that occur previously in the decoding_order.
-            token_to_decode (int or len N tensor): index in the range [0, L-1] indicating which 
-                token to predict.
+            token_to_decode (len N tensor): index in the range [0, L-1] indicating which 
+                token to predict for each item in the batch.
         Returns:
             probs ((20) torch.Tensor): a vector of probabilities for the next
                 token
@@ -62,13 +62,11 @@ class XLNetWrapper(nn.Module):
         seq = [re.sub(r"[UZOB]", "X", s) for s in seq]
         # Huggingface XLNet expects a space-separated sequence
         seq = [" ".join(s) for s in seq]
+        # Mask '-' tokens
         seq = [re.sub(r"-", "<mask>", s) for s in seq]
         input_ids = self.tokenizer(seq, return_tensors='pt', add_special_tokens=False)['input_ids']
         seq_len = input_ids.shape[-1]
-        # Mask '-' tokens
         
-        if not hasattr(token_to_decode, '__len__'):
-            token_to_decode = torch.tensor([token_to_decode])
         n_tokens = len(token_to_decode)
         
         # perm_mask should be the mask for query stream attention (don't allow items to see self), because the xlnet 
@@ -165,7 +163,7 @@ class XLNetWrapper(nn.Module):
             (n_tokens, 1, seq_len), dtype=torch.float
         )  # Shape [batch_size=n_tokens, num_tokens_to_predict=1, seq_length=n_tokens]
         for i, tok in enumerate(token_to_decode):
-            target_mapping[i, 0, tok] = 1.0 # Predict the ith token
+            target_mapping[i, 0, tok] = 1.0 # Predict token tok at batch position i
             
         with torch.inference_mode():
             out = self.model(input_ids.to(self.device), perm_mask=perm_mask.to(self.device), target_mapping=target_mapping.to(self.device))
@@ -176,21 +174,6 @@ class XLNetWrapper(nn.Module):
             probs = torch.nn.functional.softmax(index_corrected_logits, dim=-1)
             
         return probs
-
-
-class TransformerXLU100Wrapper(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self):
-        pass
-
-class ProGenWrapper(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self):
-        pass
         
 class ProteinMPNNWrapper(nn.Module):
     def __init__(self, device=None):
@@ -226,50 +209,49 @@ class ProteinMPNNWrapper(nn.Module):
         """Accept an amino acid sequence and protein structure 
         coordinates, return class probabilities for the next token
         Args:
-            seq (len N list of len L_seq str): a string representation of an amino 
-                acid sequence with unknown residues indicated with a dash (-)
+            seq (len N list of len L_seq str): a list of string representations of an amino 
+                acid sequence.
             struct ((L x 4 x 3) torch.Tensor): batch_size x seq_length x 
                 num_atoms x num_coordinates tensor
             decode_order (len L list): list of the order of indices to decode.
                 This determines the values in the permutation mask. Each index 
                 attends to all indices that occur previously in the decoding_order.
-            token_to_decode (int): index in the range [0, L-1] indicating which 
-                token to decode next. If not specified, this function will predict the
-                first token indicated with a dash
+            token_to_decode (len N tensor): tensor of indices in the range [0, L-1] indicating which 
+                token to decode next.
         Returns:
             probs ((N x 20) torch.Tensor): a vector of probabilities for the next
                 token
         """
-        N = len(seq)
+
+        N = len(token_to_decode)
         L = len(seq[0])
         assert L == struct.shape[0], "Sequence length must match the number of residues in the provided structure"
+
         # Convert amino acid character to index
         seq = [re.sub(r"-", "X", s) for s in seq]
         seq = torch.tensor([[AMINO_ACID_ORDER.index(aa) for aa in s] for s in seq]).to(self.device)
-        struct = struct.expand(N, *struct.shape).to(self.device)
         with torch.no_grad():
+            if mask_type != 'bidirectional_mlm':
+                decode_order = torch.tensor(decode_order).expand(N, L)
+            elif mask_type == 'bidirectional_mlm':
+                decode_order = torch.tensor(np.array([np.append(np.delete(decode_order, decode_order.index(tok)).tolist(), tok) for tok in token_to_decode]))
+            
+            struct = struct.expand(N, *struct.shape).to(self.device)
             # Default values
             mask = torch.ones(N, L).float().to(self.device)
             chain_M = torch.ones(N, L).float().to(self.device)
             chain_encoding_all = torch.ones(N, L).float().to(self.device)
             residue_idx = torch.arange(L).expand(N, L).to(self.device)
-            # Todo: Add support for bidirectional language modeling. From experiments with the snippet below, 
-            # ProteinMPNN seems to be really bad at this, probably because it was not trained on bidirectional context.
-            # if mask_type == 'bidirectional_mlm':
-            #     order_mask_backward = (torch.ones(L, L, device=device) - torch.eye(L, device=device)).unsqueeze(0).repeat(N, 1, 1)
-            
-            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, randn=None, decoding_order=torch.tensor(decode_order).expand(N, L).to(self.device))
+            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, randn=None, decoding_order=decode_order.to(self.device))
+
+
             probs = torch.exp(log_probs)
             # N x L x 20
             # Ignore the last entry, corresponding to 'X', and normalize
             probs = probs[:, :, :-1] / probs[:, :, :-1].sum(dim=-1).unsqueeze(-1)
-
-        if hasattr(token_to_decode, '__len__'):
-            return probs[range(len(token_to_decode)), token_to_decode]
-            # N x 20
-        else:
-            return probs[:, token_to_decode]
-            # N x 20
+            
+        return probs[range(len(token_to_decode)), token_to_decode]
+        # N x 20
 
         #     # Required for sampling
         #     chain_M_pos = torch.ones(N, L).float().to(self.device)
@@ -283,13 +265,6 @@ class ProteinMPNNWrapper(nn.Module):
         #     probs = out['probs']
         # # Return the probabilities for th 0th chain and the 0th residue
         # return probs[:, token_to_decode]
-
-class ESMIF1Wrapper(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self):
-        pass
 
 class BayesStructModel(nn.Module):
     def __init__(self, device=None, bayes_balance_factor=0.002, **kwargs):
@@ -398,5 +373,28 @@ def test_protein_mpnn_wrapper():
     mpnn = ProteinMPNNWrapper()
     decoding_order = np.arange(len(seq)).tolist()
     out_probs = mpnn(seq=seq, struct=struct, decoding_order=decoding_order, token_to_decode=given_characters_up_to)
+
+
+
+class TransformerXLU100Wrapper(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self):
+        pass
+
+class ProGenWrapper(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self):
+        pass
+
+class ESMIF1Wrapper(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self):
+        pass
 
 model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesStructModel, 'trRosetta':TrRosettaWrapper}
