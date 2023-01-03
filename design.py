@@ -53,12 +53,13 @@ def example_design(args):
     else:
         designed_seq = decode_algorithm_dict[args.decode_algorithm](prob_model=prob_model, struct=struct, seq=seq, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=from_scratch)
 
-    return orig_seq, masked_seq, designed_seq
+    return {"Original sequence":orig_seq, "Masked sequence (tokens to predict are indicated by a dash)":masked_seq, "Designed sequence":designed_seq}
 
 
 if __name__ == '__main__':
     args = parser.parse_args()
     
     seqs = example_design(args)
-    print(seqs)
-
+    for k, v in seqs.items():
+        print(k)
+        print(v)
