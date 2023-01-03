@@ -9,16 +9,15 @@ python3 design.py --model_name bayes_design --protein_id 6MRR --decode_order n_t
 ## Detailed steps to run with Docker
 - Clone repository
 ```
-git clone git@github.com:dellacortelab/enzyme-design.git 
-cd docking-to-publish
+git clone git@github.com:dellacortelab/bayes_design.git
 ```
 - Build container
 ```
-docker build -t bayes_design -f ./bayes_design/dependencies/Dockerfile dependencies
+docker build -t bayes_design -f ./bayes_design/dependencies/Dockerfile ./bayes_design/dependencies
 ```
 - Run container
 ```
-docker run -dit --gpus all --name bayes_dev --rm -v ./bayes_design:/code -v ./bayes_design/data:/data bayes_design
+docker run -dit --gpus all --name bayes_dev --rm -v $(pwd)/bayes_design:/code -v $(pwd)/bayes_design/data:/data bayes_design
 docker exec -it bayes_dev /bin/bash
 ```
 - Redesign a protein backbone

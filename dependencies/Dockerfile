@@ -33,7 +33,9 @@ RUN echo "conda activate bayes_design_env" >> $HOME/.bashrc
 
 # Install ProteinMPNN
 RUN cd $HOME && git clone -q https://github.com/dauparas/ProteinMPNN.git
-RUN echo "export PYTHONPATH=$PYTHONPATH:$HOME/ProteinMPNN/vanilla_proteinmpnn" > ~/.bashrc
+# Checkout the hash that this codebase is based on
+RUN cd $HOME/ProteinMPNN && git reset --hard e61ecb7e3c32e630ff7a34d16c3a43fcf8f8a8bd
+RUN echo "export PYTHONPATH=$PYTHONPATH:$HOME/ProteinMPNN/" >> $HOME/.bashrc
 
 RUN rm /etc/apt/sources.list.d/cuda.list
 RUN rm /etc/apt/sources.list.d/nvidia-ml.list
