@@ -166,16 +166,11 @@ class ProteinMPNNWrapper(nn.Module):
         else:
             self.device = torch.device('cpu')
 
-        #v_48_010=version with 48 edges 0.10A noise
-        model_name = "v_48_030"
         backbone_noise=0.00               # Standard deviation of Gaussian noise to add to backbone atoms
-        path_to_model_weights='./bayes_design/protein_mpnn/vanilla_model_weights'          
+        #v_48_030=version with 48 edges 0.30A noise
+        checkpoint_path ='./bayes_design/bayes_design/protein_mpnn/vanilla_model_weights/v_48_030.pt'
         hidden_dim = 128
-        num_layers = 3 
-        model_folder_path = path_to_model_weights
-        if model_folder_path[-1] != '/':
-            model_folder_path = model_folder_path + '/'
-        checkpoint_path = model_folder_path + f'{model_name}.pt'
+        num_layers = 3
         checkpoint = torch.load(checkpoint_path, map_location=self.device) 
         print('Number of edges:', checkpoint['num_edges'])
         noise_level_print = checkpoint['noise_level']
