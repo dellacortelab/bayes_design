@@ -5,7 +5,7 @@ BayesDesign is an algorithm for designing proteins with high stability and confo
 
 Try out the BayesDesign model here:
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dellacortelab/bayes_design/blob/master/examples/bayes_design.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dellacortelab/bayes_design/blob/master/examples/BayesDesign.ipynb)
 
 Dependencies: `./dependencies/requirements.txt`.
 
