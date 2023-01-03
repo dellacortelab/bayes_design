@@ -1,6 +1,6 @@
 import os
 import torch
-from protein_mpnn_utils import parse_PDB, StructureDatasetPDB
+from .protein_mpnn.protein_mpnn_utils import parse_PDB, StructureDatasetPDB
 
 import numpy as np
 

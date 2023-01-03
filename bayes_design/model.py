@@ -4,7 +4,7 @@ from torch import nn
 import numpy as np
 import torch
 from transformers import XLNetTokenizer, XLNetLMHeadModel
-from protein_mpnn_utils import ProteinMPNN
+from .protein_mpnn.protein_mpnn_utils import ProteinMPNN
 
 from .utils import AMINO_ACID_ORDER
 
@@ -169,7 +169,7 @@ class ProteinMPNNWrapper(nn.Module):
         #v_48_010=version with 48 edges 0.10A noise
         model_name = "v_48_030"
         backbone_noise=0.00               # Standard deviation of Gaussian noise to add to backbone atoms
-        path_to_model_weights='/root/ProteinMPNN/vanilla_proteinmpnn/vanilla_model_weights'          
+        path_to_model_weights='./bayes_design/protein_mpnn/vanilla_model_weights'          
         hidden_dim = 128
         num_layers = 3 
         model_folder_path = path_to_model_weights
