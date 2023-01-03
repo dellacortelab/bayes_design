@@ -1,5 +1,4 @@
 numpy==1.21.2
-pytorch==1.4.0
 sentencepiece==0.1.96
 transformers==4.20.1
 tokenizers==0.12.1

@@ -12,7 +12,7 @@ Dependencies: `./dependencies/requirements.txt`.
 ## One-line sequence design
 To design a protein sequence to fit a protein backbone:
 ```
-python3 ./code/design.py --model_name bayes_design --protein_id 6MRR --decode_order n_to_c --decode_algorithm beam --n_beams 128 --fixed_positions 67 68
+python3 design.py --model_name bayes_design --protein_id 6MRR --decode_order n_to_c --decode_algorithm beam --n_beams 128 --fixed_positions 67 68
 ```
 
 ## Detailed steps to run with Docker
@@ -31,7 +31,7 @@ docker exec -it bayes_dev /bin/bash
 ```
 - Redesign a protein backbone
 ```
-python3 ./code/design.py --model_name bayes_design --protein_id 6MRR --decode_order n_to_c --decode_algorithm beam --n_beams 128 --fixed_positions 67 68
+cd ./code && python3 design.py --model_name bayes_design --protein_id 6MRR --decode_order n_to_c --decode_algorithm beam --n_beams 128 --fixed_positions 67 68
 ```
 ## Citation
 ```

@@ -6,7 +6,7 @@ import numpy as np
 
 AMINO_ACID_ORDER = 'ACDEFGHIKLMNPQRSTVWYX'
 
-def get_protein(pdb_code='6MRR', structures_dir='./bayes_design/data'):
+def get_protein(pdb_code='6MRR', structures_dir='./data'):
     """Get a sequence in string format and 4-atom protein structure in L x 4 x 3
     tensor format (with atoms in N CA CB C order).
     """

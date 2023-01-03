@@ -168,7 +168,7 @@ class ProteinMPNNWrapper(nn.Module):
 
         backbone_noise=0.00               # Standard deviation of Gaussian noise to add to backbone atoms
         #v_48_030=version with 48 edges 0.30A noise
-        checkpoint_path ='./bayes_design/bayes_design/protein_mpnn/vanilla_model_weights/v_48_030.pt'
+        checkpoint_path ='./bayes_design/protein_mpnn/vanilla_model_weights/v_48_030.pt'
         hidden_dim = 128
         num_layers = 3
         checkpoint = torch.load(checkpoint_path, map_location=self.device) 
