@@ -2,22 +2,11 @@ import re
 import torch
 from torch import nn
 import numpy as np
-import matplotlib.pyplot as plt
-import shutil
-import warnings
-import numpy as np
 import torch
-import random
-import os.path
-from pathlib import Path
-import subprocess
 from transformers import XLNetTokenizer, XLNetLMHeadModel
-from protein_mpnn_utils import ProteinMPNN
-from tr_rosetta_pytorch import trRosettaNetwork
-from tr_rosetta_pytorch.utils import preprocess
-from tr_rosetta_pytorch.cli import DEFAULT_MODEL_PATH
+from .protein_mpnn.protein_mpnn_utils import ProteinMPNN
 
-from .utils import AMINO_ACID_ORDER, get_protein
+from .utils import AMINO_ACID_ORDER
 
 class XLNetWrapper(nn.Module):
     def __init__(self, model_name='Rostlab/prot_xlnet', device=None):
@@ -51,13 +40,7 @@ class XLNetWrapper(nn.Module):
         Returns:
             probs ((20) torch.Tensor): a vector of probabilities for the next
                 token
-        """
-        # When using bidirection autoregressive, we should get the same probabilities whether providing the whole sequence
-        # or the masked sequence, because the permutation mask protects us.
-        # When using unidirectional autoregressive, we should get the same probabilities as well.
-        # When using bidirectional mlm, we should get different probabilities as we take advantage of the provided
-        # future context in one case and not the other
-        
+        """        
         # Replace rare amino acids with "X"
         seq = [re.sub(r"[UZOB]", "X", s) for s in seq]
         # Huggingface XLNet expects a space-separated sequence
@@ -70,7 +53,7 @@ class XLNetWrapper(nn.Module):
         n_tokens = len(token_to_decode)
         
         # perm_mask should be the mask for query stream attention (don't allow items to see self), because the xlnet 
-        # implementation subtracts an identity matrix to perm_mask to get the content stream attention, where items are
+        # implementation subtracts an identity matrix from perm_mask to get the content stream attention, where items are
         # masked from seeing self. The target_mapping ensures that we use query stream attention when predicting
         # the target elements https://github.com/huggingface/transformers/blob/v4.23.1/src/transformers/models/xlnet/modeling_xlnet.py#L1172
         # In query stream attention you should always be masked from yourself because tokens are always masked from themselves during training
@@ -80,7 +63,6 @@ class XLNetWrapper(nn.Module):
                 token_to_decode_idx = decode_order.index(tok)
                 # +1 because we want to include the tokens that the token_to_decode can see
                 for j, idx in enumerate(decode_order[:token_to_decode_idx+1]):
-                    # This should be j, because we den't allow tokens to see themselves
                     perm_mask[i, idx, decode_order[:j]] = 0.0
             # decode_order: [2, 1, 0]
             # i = 0 -> decode pos 2
@@ -140,7 +122,6 @@ class XLNetWrapper(nn.Module):
             #       [1, 0, 1, 0]
             #       [1, 0, 0, 1]
             
-        # We should not use this option unless we get it working for ProteinMPNN as well
         elif mask_type == 'bidirectional_mlm':
             for i, tok in enumerate(token_to_decode):
                 perm_mask[i, :, torch.arange(seq_len) != tok] = 0.0 # Allow full bidirectional context (masked-language-model-style. this is not autoregressive)
@@ -185,16 +166,11 @@ class ProteinMPNNWrapper(nn.Module):
         else:
             self.device = torch.device('cpu')
 
-        #v_48_010=version with 48 edges 0.10A noise
-        model_name = "v_48_030"
         backbone_noise=0.00               # Standard deviation of Gaussian noise to add to backbone atoms
-        path_to_model_weights='/root/ProteinMPNN/vanilla_proteinmpnn/vanilla_model_weights'          
+        #v_48_030=version with 48 edges 0.30A noise
+        checkpoint_path ='./bayes_design/protein_mpnn/vanilla_model_weights/v_48_030.pt'
         hidden_dim = 128
-        num_layers = 3 
-        model_folder_path = path_to_model_weights
-        if model_folder_path[-1] != '/':
-            model_folder_path = model_folder_path + '/'
-        checkpoint_path = model_folder_path + f'{model_name}.pt'
+        num_layers = 3
         checkpoint = torch.load(checkpoint_path, map_location=self.device) 
         print('Number of edges:', checkpoint['num_edges'])
         noise_level_print = checkpoint['noise_level']
@@ -242,8 +218,8 @@ class ProteinMPNNWrapper(nn.Module):
             chain_M = torch.ones(N, L).float().to(self.device)
             chain_encoding_all = torch.ones(N, L).float().to(self.device)
             residue_idx = torch.arange(L).expand(N, L).to(self.device)
-            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, randn=None, decoding_order=decode_order.to(self.device))
 
+            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, randn=None, decoding_order=decode_order.to(self.device))
 
             probs = torch.exp(log_probs)
             # N x L x 20
@@ -253,6 +229,7 @@ class ProteinMPNNWrapper(nn.Module):
         return probs[range(len(token_to_decode)), token_to_decode]
         # N x 20
 
+<<<<<<< HEAD
         #     # Required for sampling
         #     chain_M_pos = torch.ones(N, L).float().to(self.device)
         #     bias_AAs_np = np.zeros(len(AMINO_ACID_ORDER))
@@ -267,6 +244,9 @@ class ProteinMPNNWrapper(nn.Module):
         # return probs[:, token_to_decode]
 
 class BayesDesignModel(nn.Module):
+=======
+class BayesDesign(nn.Module):
+>>>>>>> master
     def __init__(self, device=None, bayes_balance_factor=0.002, **kwargs):
         super().__init__()
         if device is not None:
@@ -399,4 +379,4 @@ class ESMIF1Wrapper(nn.Module):
     def forward(self):
         pass
 
-model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesStructModel, 'trRosetta':TrRosettaWrapper}
+model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign}

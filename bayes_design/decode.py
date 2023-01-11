@@ -14,52 +14,52 @@ from .utils import AMINO_ACID_ORDER
 ####################################################################################
 
 def get_proximity_decode_order(seq):
-        """Accept an amino acid sequence with fixed residues provided and other
-        residues represented by a dash (-) character. Return a decoding order that
-        prioritizes predicted residues based on sequence proximity to fixed residues.
-        Args:
-            seq (len L str): a string representation of an amino
-                acid sequence with unknown residues indicated with a dash (-)
-        Returns:
-            decode_order (list of len L): a list where the integer in position 0
-                indicates the first index to decode, the integer in position 1 indicates
-                the next index to decode, etc.
-        """
-        all_indices = np.arange(len(seq))
-        indices_to_predict = [i for i, char in zip(all_indices, seq) if char == '-']
-        fixed_indices = [i for i, char in zip(all_indices, seq) if char != '-']
-        distances = []
-        for i in indices_to_predict:
-            distance = min([abs(idx - i) for idx in fixed_indices])
-            distances.append(distance)
-        order = np.argsort(distances)
-        indices_to_predict_sorted = [indices_to_predict[i] for i in order]
-        decode_order = fixed_indices + indices_to_predict_sorted
-        return decode_order
+    """Accept an amino acid sequence with fixed residues provided and other
+    residues represented by a dash (-) character. Return a decoding order that
+    prioritizes predicted residues based on sequence proximity to fixed residues.
+    Args:
+        seq (len L str): a string representation of an amino
+            acid sequence with unknown residues indicated with a dash (-)
+    Returns:
+        decode_order (list of len L): a list where the integer in position 0
+            indicates the first index to decode, the integer in position 1 indicates
+            the next index to decode, etc.
+    """
+    all_indices = np.arange(len(seq))
+    indices_to_predict = [i for i, char in zip(all_indices, seq) if char == '-']
+    fixed_indices = [i for i, char in zip(all_indices, seq) if char != '-']
+    distances = []
+    for i in indices_to_predict:
+        distance = min([abs(idx - i) for idx in fixed_indices])
+        distances.append(distance)
+    order = np.argsort(distances)
+    indices_to_predict_sorted = [indices_to_predict[i] for i in order]
+    decode_order = fixed_indices + indices_to_predict_sorted
+    return decode_order
 
 def get_reverse_proximity_decode_order(seq):
-        """Accept an amino acid sequence with fixed residues provided and other
-        residues represented by a dash (-) character. Return a decoding order that
-        prioritizes predicted residues based on sequence distance to fixed residues.
-        Args:
-            seq (len L str): a string representation of an amino
-                acid sequence with unknown residues indicated with a dash (-)
-        Returns:
-            decode_order (list of len L): a list where the integer in position 0
-                indicates the first index to decode, the integer in position 1 indicates
-                the next index to decode, etc.
-        """
-        all_indices = np.arange(len(seq))
-        indices_to_predict = [i for i, char in zip(all_indices, seq) if char == '-']
-        fixed_indices = [i for i, char in zip(all_indices, seq) if char != '-']
-        distances = []
-        for i in indices_to_predict:
-            distance = min([abs(idx - i) for idx in fixed_indices])
-            distances.append(distance)
-        order = np.argsort(distances)
-        indices_to_predict_sorted = [indices_to_predict[i] for i in order]
-        decode_order = fixed_indices + reversed(indices_to_predict_sorted)
-        return decode_order
+    """Accept an amino acid sequence with fixed residues provided and other
+    residues represented by a dash (-) character. Return a decoding order that
+    prioritizes predicted residues based on sequence distance to fixed residues.
+    Args:
+        seq (len L str): a string representation of an amino
+            acid sequence with unknown residues indicated with a dash (-)
+    Returns:
+        decode_order (list of len L): a list where the integer in position 0
+            indicates the first index to decode, the integer in position 1 indicates
+            the next index to decode, etc.
+    """
+    all_indices = np.arange(len(seq))
+    indices_to_predict = [i for i, char in zip(all_indices, seq) if char == '-']
+    fixed_indices = [i for i, char in zip(all_indices, seq) if char != '-']
+    distances = []
+    for i in indices_to_predict:
+        distance = min([abs(idx - i) for idx in fixed_indices])
+        distances.append(distance)
+    order = np.argsort(distances)
+    indices_to_predict_sorted = [indices_to_predict[i] for i in order]
+    decode_order = fixed_indices + reversed(indices_to_predict_sorted)
+    return decode_order
 
 def get_random_decode_order(seq):
     """Accept an amino acid sequence with fixed residues provided and other
@@ -96,10 +96,12 @@ def get_n_to_c_decode_order(seq):
     decode_order = fixed_indices + indices_to_predict
     return decode_order
 
+
+####################################################################################
+# Decode Algorithms
+####################################################################################
+
 def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
-    """
-    This function works.
-    """
     if from_scratch:
         mask_type = 'bidirectional_autoregressive'
     else:
@@ -122,9 +124,6 @@ def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
     return current_seq
 
 def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
-    """
-    This function works
-    """
     if from_scratch:
         mask_type = 'bidirectional_autoregressive'
     else:
@@ -143,25 +142,19 @@ def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
     return current_seq
 
 def random_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
-    """
-    This function works.
-    """
     current_seq = seq
     for idx in decode_order:
         if fixed_position_mask[idx] == True:
             # Do not change this token
             continue
-        next_item = np.random.choice(np.arange(21))
+        next_item = np.random.choice(np.arange(20))
         aa = AMINO_ACID_ORDER[next_item]
         current_seq = list(current_seq)
         current_seq[idx] = aa
         current_seq = ''.join(current_seq)
     return current_seq
 
-def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
-    """
-    This function works.
-    """    
+def beam_decode_slow(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
     if from_scratch:
         mask_type = 'bidirectional_autoregressive'
     else:
@@ -187,10 +180,7 @@ def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
     return top_candidates[0][0]
 
-def beam_decode_medium(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
-    """
-    This function works.
-    """
+def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
     if from_scratch:
         mask_type = 'bidirectional_autoregressive'
     else:
@@ -224,46 +214,6 @@ def beam_decode_medium(prob_model, struct, seq, decode_order, fixed_position_mas
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
     return top_candidates[0][0]
 
-def beam_decode_fast(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
-    """
-    This function does not yet work.
-    """
-    L = len(seq)
-    top_candidates = [[list(seq), 0.0]]
-    for j, decode_idx in enumerate(decode_order):
-        print("j:", j)
-        top_sequences = [seq for seq, score in top_candidates]
-        # top_sequences: n_beams x L
-        probs = prob_model(seq=[''.join(seq) for seq in top_sequences], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor(decode_idx))
-        # probs: n_beams x 21
-        proposed_sequences = np.array(top_sequences)
-        proposed_sequences = np.repeat(proposed_sequences[:, np.newaxis, :], len(AMINO_ACID_ORDER), axis=1)
-        proposed_sequences[:, np.arange(len(AMINO_ACID_ORDER)), decode_idx] = np.array(list(AMINO_ACID_ORDER))
-        # proposed_sequences: n_beams x 21 x L
-
-        if fixed_position_mask[decode_idx] == True:
-            fixed_aa_idx = AMINO_ACID_ORDER.index(seq[decode_idx])
-            probs = probs[:, fixed_aa_idx].unsqueeze(-1)
-            # probs: n_beams x 1
-            proposed_sequences = proposed_sequences[:, fixed_aa_idx, :][:, np.newaxis, :]
-            # proposed_sequences: n_beams x 1 x L
-
-        top_scores = torch.tensor([score for seq, score in top_candidates]).to(probs.device)
-        # top_scores: n_beams
-        summed_probs = top_scores[:, None] + torch.log(probs)
-        # summed_probs: n_beams x 21
-        orig_shape = summed_probs.shape
-        summed_probs = summed_probs.reshape(-1)
-        proposed_sequences = proposed_sequences.reshape(-1, proposed_sequences.shape[-1])
-        top_k = torch.topk(summed_probs, k=min(n_beams, len(summed_probs)))
-        top_probs = top_k.values.tolist()
-        top_sequences = [proposed_sequences[i].tolist() for i in top_k.indices]
-        top_candidates = [list(x) for x in zip(top_sequences, top_probs)]
-
-    top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
-    return top_candidates[0][0]
-
-
 
 decode_order_dict = {'proximity':get_proximity_decode_order, 'reverse_proximity':get_reverse_proximity_decode_order, 'random':get_random_decode_order, 'n_to_c':get_n_to_c_decode_order}
-decode_algorithm_dict = {'greedy':greedy_decode, 'beam_fast':beam_decode_fast, 'beam_medium':beam_decode_medium, 'beam':beam_decode, 'sample':sample_decode, 'random':random_decode}
+decode_algorithm_dict = {'greedy':greedy_decode, 'beam':beam_decode, 'beam_slow':beam_decode_slow, 'sample':sample_decode, 'random':random_decode}
