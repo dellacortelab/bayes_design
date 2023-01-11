@@ -30,6 +30,7 @@ compare_struct_probs_parser = subparsers.add_parser('compare_struct_probs')
 compare_struct_probs_parser.add_argument('--sequences', help='String representations of protein sequences', nargs='+', required=True)
 compare_struct_probs_parser.add_argument('--protein_id', help="The PDB id of the structure for the protein sequences", default='6MRR')
 compare_struct_probs_parser.add_argument('--results_dir', help="The directory to store results", default='./results')
+compare_struct_probs_parser.add_argument('--device', help="The GPU index to use", type=int, default=0)
 compare_struct_probs_parser.set_defaults(func=compare_struct_probs)
 
 viz_probs_parser = subparsers.add_parser('viz_probs')

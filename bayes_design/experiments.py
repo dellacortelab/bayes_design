@@ -34,7 +34,7 @@ def compare_seq_metric(args):
 def compare_struct_probs(args):
     """Return log p(struct=x|seq=s) for the given sequence and structure using trRosetta.
     """
-    device = torch.device("cuda:1" if (torch.cuda.is_available()) else "cpu")
+    device = torch.device(f"cuda:{args.device}" if (torch.cuda.is_available()) else "cpu")
     # Get true distances
     cb_coordinates_true = get_cb_coordinates(args.protein_id)
     cb_distogram_true = compute_distogram(cb_coordinates_true)
@@ -46,30 +46,31 @@ def compare_struct_probs(args):
     im = Image.fromarray(img_1)
     im.convert('RGB').save(os.path.join(args.results_dir, f'{args.protein_id}_trrosetta.jpg'))
     forward_struct_model = TrRosettaWrapper(device=device)
+    
+    with torch.no_grad():
+        # Get trRosetta-predicted distogram for designed sequences
+        for seq in args.sequences:
+            print("Sequence", seq)
+            seq_id = args.protein_id + '_' + seq[:10]
+            cb_distogram_predicted = torch.tensor(forward_struct_model(seq, seq_id=seq_id))
+            # Edit predicted distogram to correspond to a more sensible, ordered layout, with not-in-contact next to the largest distances
+            cb_distogram_predicted = torch.cat((cb_distogram_predicted[..., 1:], cb_distogram_predicted[..., :1]), dim=-1)
+            # Make the diagonal entries correspond to the lowest distance bin, not the not-in-contact bin
+            cb_distogram_predicted[:, :, 0].fill_diagonal_(1)
+            for i in range(1, 36):
+                cb_distogram_predicted[:, :, i].fill_diagonal_(0)
+            
+            # Get probability of true structure under predicted distograms.
+            probs = torch.gather(input=cb_distogram_predicted.cpu(), dim=-1, index=cb_distogram_true_idx.unsqueeze(-1))
+            log_probs = torch.log(probs)
+            log_prob = torch.sum(log_probs)
 
-    # Get trRosetta-predicted distogram for designed sequences
-    for seq in args.sequences:
-        seq_id = args.protein_id + '_' + seq[:10]
-        cb_distogram_predicted = torch.tensor(forward_struct_model(seq, seq_id=seq_id))
-        # Edit predicted distogram to correspond to a more sensible, ordered layout, with not-in-contact next to the largest distances
-        cb_distogram_predicted = torch.cat((cb_distogram_predicted[..., 1:], cb_distogram_predicted[..., :1]), dim=-1)
-        # Make the diagonal entries correspond to the lowest distance bin, not the not-in-contact bin
-        cb_distogram_predicted[:, :, 0].fill_diagonal_(1)
-        for i in range(1, 36):
-            cb_distogram_predicted[:, :, i].fill_diagonal_(0)
-        
-        # Get probability of true structure under predicted distograms.
-        probs = torch.gather(input=cb_distogram_predicted.cpu(), dim=-1, index=cb_distogram_true_idx.unsqueeze(-1))
-        log_probs = torch.log(probs)
-        log_prob = torch.sum(log_probs)
+            print("Prob:", log_prob)
 
-        print("Sequence", seq)
-        print("Prob:", log_prob)
-
-        img = torch.argmax(cb_distogram_predicted, dim=-1).float().cpu().detach().numpy()
-        img_1 = np.round(img/img.max()*255)
-        im = Image.fromarray(img_1)
-        im.convert('RGB').save(os.path.join(args.results_dir, f'{seq_id}_trrosetta.jpg'))
+            img = torch.argmax(cb_distogram_predicted, dim=-1).float().cpu().detach().numpy()
+            img_1 = np.round(img/img.max()*255)
+            im = Image.fromarray(img_1)
+            im.convert('RGB').save(os.path.join(args.results_dir, f'{seq_id}_trrosetta.jpg'))
         
 def compare_probs(struct_to_seq_model, seq_model, struct, seq, decode_order, bayes_balance_factor=0.):
     """Compare probability of residues under several models and return the distributions p(seq|struct), p(seq), 

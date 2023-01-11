@@ -266,7 +266,7 @@ class ProteinMPNNWrapper(nn.Module):
         # # Return the probabilities for th 0th chain and the 0th residue
         # return probs[:, token_to_decode]
 
-class BayesStructModel(nn.Module):
+class BayesDesignModel(nn.Module):
     def __init__(self, device=None, bayes_balance_factor=0.002, **kwargs):
         super().__init__()
         if device is not None:
@@ -295,6 +295,7 @@ class BayesStructModel(nn.Module):
 
         return p_struct_seq
 
+
 class TrRosettaWrapper():
     def __init__(self, data_location='/data/msa', database='/data/uniref30/UniRef30_2022_02', device=None):
 
@@ -312,7 +313,8 @@ class TrRosettaWrapper():
                 filters = 64,
                 kernel = 3,
                 num_layers = 61
-            ).to(self.device)
+            )
+            trrosetta = trrosetta.to(self.device)
             trrosetta.load_state_dict(torch.load(model_file, map_location=self.device))
             trrosetta.eval()
             self.models.append(trrosetta)

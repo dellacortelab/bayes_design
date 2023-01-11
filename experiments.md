@@ -241,7 +241,7 @@ beam 512 design from scratch,   KLPEGWVEKVDPKTGEKVYYNTKTKEITKEKPVG
 
 
 # Price sequences 1COI (coiled coil) aka 1CW
-From scratch (bidirectional autoregressive) log probs:
+<!-- From scratch (bidirectional autoregressive) log probs:
 original sequence               KLPPGWEKRMSRSSGRVYYFNHITNASQFERPSG
 
 BayesDesign
@@ -254,7 +254,7 @@ ProteinMPNN
 greedy design from scratch,     TLPEGWVEVVDPETGEKKYYNTKTKEVTSEKPVG
 beam 128 design from scratch,   KLPEGWVEKVDPKTGKKVYYNTKTKEITEEKPVG  
 beam 256 design from scratch,   KLPEGWVEKVDPKTGKKVYYNTKTKEITEEKPVG  
-beam 512 design from scratch,   KLPEGWVEKVDPKTGEKVYYNTKTKEITKEKPVG  
+beam 512 design from scratch,   KLPEGWVEKVDPKTGEKVYYNTKTKEITKEKPVG   -->
 
 ## Price sequence design commands
 Greedy design from scratch BayesDesign
