@@ -1,4 +1,7 @@
+biopython==1.80
+matplotlib==3.6.3
 numpy==1.21.2
 sentencepiece==0.1.96
 transformers==4.20.1
 tokenizers==0.12.1
+tr-rosetta-pytorch==0.0.3

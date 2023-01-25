@@ -1,11 +1,10 @@
 
 import torch
 import numpy as np
-import math
 import os
-from PIL import Image
 from matplotlib import pyplot as plt
 import matplotlib
+from PIL import Image
 
 from bayes_design.decode import decode_order_dict, decode_algorithm_dict
 from bayes_design.evaluate import metric_dict
@@ -30,69 +29,73 @@ def compare_seq_metric(args):
     for seq in args.sequences:
         metric = metric_dict[args.metric](seq=seq, prob_model=prob_model, decode_order=args.decode_order, structure=structure, fixed_position_mask=fixed_position_mask, mask_type=mask_type)
         print(f'Metric {args.metric}:', metric)
-
-def compare_struct_probs(args):
-    """Return log p(struct=x|seq=s) for the given sequence and structure using trRosetta.
-    """
-    device = torch.device(f"cuda:{args.device}" if (torch.cuda.is_available()) else "cpu")
-    # Get true distances
-    cb_coordinates_true = get_cb_coordinates(args.protein_id)
-    cb_distogram_true = compute_distogram(cb_coordinates_true)
-    cb_distogram_true_idx = torch.argmax(cb_distogram_true, dim=-1)
-
-    from PIL import Image
-    img = cb_distogram_true_idx.float().cpu().detach().numpy()
-    img_1 = np.round(img/img.max()*255)
-    im = Image.fromarray(img_1)
-    im.convert('RGB').save(os.path.join(args.results_dir, f'{args.protein_id}_trrosetta.jpg'))
-    forward_struct_model = TrRosettaWrapper(device=device)
-    
-    with torch.no_grad():
-        # Get trRosetta-predicted distogram for designed sequences
-        for seq in args.sequences:
-            print("Sequence", seq)
-            seq_id = args.protein_id + '_' + seq[:10]
-            cb_distogram_predicted = torch.tensor(forward_struct_model(seq, seq_id=seq_id))
-            # Edit predicted distogram to correspond to a more sensible, ordered layout, with not-in-contact next to the largest distances
-            cb_distogram_predicted = torch.cat((cb_distogram_predicted[..., 1:], cb_distogram_predicted[..., :1]), dim=-1)
-            # Make the diagonal entries correspond to the lowest distance bin, not the not-in-contact bin
-            cb_distogram_predicted[:, :, 0].fill_diagonal_(1)
-            for i in range(1, 36):
-                cb_distogram_predicted[:, :, i].fill_diagonal_(0)
-            
-            # Get probability of true structure under predicted distograms.
-            probs = torch.gather(input=cb_distogram_predicted.cpu(), dim=-1, index=cb_distogram_true_idx.unsqueeze(-1))
-            log_probs = torch.log(probs)
-            log_prob = torch.sum(log_probs)
-
-            print("Prob:", log_prob)
-
-            img = torch.argmax(cb_distogram_predicted, dim=-1).float().cpu().detach().numpy()
-            img_1 = np.round(img/img.max()*255)
-            im = Image.fromarray(img_1)
-            im.convert('RGB').save(os.path.join(args.results_dir, f'{seq_id}_trrosetta.jpg'))
         
-def compare_probs(struct_to_seq_model, seq_model, struct, seq, decode_order, bayes_balance_factor=0.):
-    """Compare probability of residues under several models and return the distributions p(seq|struct), p(seq), 
-    and p(struct|seq) over each amino acid in the sequence
-    """
-    mask_type = 'bidirectional_mlm'
-    probs = []
-    # TODO: remove for loop, pass in batch of sequences
-    for i in range(len(seq)):
-        p_seq_struct = struct_to_seq_model(seq=[seq], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([i]), mask_type=mask_type).clone()
-        p_seq = seq_model([seq], decode_order=decode_order, token_to_decode=torch.tensor([i]), mask_type=mask_type).clone()
-        p_seq_struct_div_p_seq = p_seq_struct / p_seq
-        p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
-        # For non-zero balance factor, return probabilities associated with balanced data
-        if bayes_balance_factor != 0:
-            p_seq_struct += bayes_balance_factor
-            p_seq += bayes_balance_factor
-            p_seq_struct_div_p_seq = p_seq_struct / p_seq
-            p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
-        probs.append((p_seq_struct, p_seq, p_struct_seq))
 
-    return probs
+def generate_sequence_variants(orig_seq, num_variants=10, perc_residues_to_mutate=0.1):
+    """Generate variants of orig_seq by mutating a random subset of residues
+    Args:
+        orig_seq (str): Original sequence
+        num_variants (int): Number of variants to generate
+        perc_residues_to_mutate (float): Percentage of residues to mutate
+    Returns:
+        variants (list): List of variants
+    """
+    variants = []
+    for _ in range(num_variants):
+        num_residues_to_mutate = int(perc_residues_to_mutate * len(orig_seq))
+        residues_to_mutate = np.random.choice(len(orig_seq), num_residues_to_mutate, replace=False)
+        variant = list(orig_seq)
+        for residue in residues_to_mutate:
+            variant[residue] = np.random.choice([aa for aa in AMINO_ACID_ORDER[:-1] if aa != orig_seq[residue]])
+        variants.append(''.join(variant))
+    return variants
+
+def compare_struct_correlation(args):
+    """Compute the correlation of model scores with the trRosetta probability. If comparing BayesDesign to ProteinMPNN,
+    this must be for multiple sequences across a single structure. This is because BayesDesign is expected to correlate
+    with trRosetta across multiple sequences for the same structure, but not across structures.
+    """
+    np.random.seed(0)
+    sequence, structure = get_protein(args.protein_id)
+    device = torch.device(args.device)
+    fixed_position_mask = get_fixed_position_mask(fixed_position_list=args.fixed_positions, seq_len=len(sequence))
+    masked_seq = ''.join(['-' if not fixed else char for char, fixed in zip(sequence, fixed_position_mask)])
+    # Decode order defines the order in which the masked positions are predicted
+    decode_order = decode_order_dict[args.decode_order](masked_seq)
+    
+    mask_type = 'bidirectional_mlm'
+
+    protein_mpnn = model_dict['protein_mpnn'](device=device)
+    bayes_design = model_dict['bayes_design'](device=device)
+    trRosetta = model_dict['trRosetta'](device=device)
+        
+    log_p_bayes = []
+    log_p_protein_mpnn = []
+    log_p_trRosetta = []
+    sequence_variants = generate_sequence_variants(orig_seq=sequence, num_variants=args.num_variants, perc_residues_to_mutate=args.perc_residues_to_mutate)
+    for seq in sequence_variants:
+        log_p_protein_mpnn.append(metric_dict['log_prob'](seq=seq, prob_model=protein_mpnn, decode_order=args.decode_order, structure=structure, fixed_position_mask=fixed_position_mask, mask_type=mask_type))
+        log_p_bayes.append(metric_dict['log_prob'](seq=seq, prob_model=bayes_design, decode_order=args.decode_order, structure=structure, fixed_position_mask=fixed_position_mask, mask_type=mask_type))
+        log_p_trRosetta.append(get_trRosetta_log_prob(trRosetta=trRosetta, sequence=seq, protein_id=args.protein_id))
+        
+    # Make a matplotlib scatter plot of BayesDesign and trRosetta, with the Pearson correlation coefficient as the title
+    fig, ax = plt.subplots()
+    ax.scatter(log_p_bayes, log_p_trRosetta)
+    ax.set_xlabel('BayesDesign')
+    ax.set_ylabel('trRosetta')
+    ax.set_title(f'Pearson correlation coefficient: {np.corrcoef(log_p_bayes, log_p_trRosetta)[0, 1]:.3f}')
+    fig.savefig(os.path.join(args.results_dir, f'{args.protein_id}_bayes_trRosetta_scatter.png'))
+    plt.close(fig)
+
+    # Make a matplotlib scatter plot of ProteinMPNN and trRosetta, with the Pearson correlation coefficient as the title
+    fig, ax = plt.subplots()
+    ax.scatter(log_p_protein_mpnn, log_p_trRosetta)
+    ax.set_xlabel('ProteinMPNN')
+    ax.set_ylabel('trRosetta')
+    ax.set_title(f'Pearson correlation coefficient: {np.corrcoef(log_p_protein_mpnn, log_p_trRosetta)[0, 1]:.3f}')
+    fig.savefig(os.path.join(args.results_dir, f'{args.protein_id}_protein_mpnn_trRosetta_scatter.png'))
+    plt.close(fig)
+
 
 def viz_probs(args):
     """Compare p(seq|struct)/p(seq), p(seq), and p(seq|struct), across all residues, highlighting top 1 in blue, second in green, third in red
@@ -154,6 +157,61 @@ def viz_probs(args):
     plt.yscale('log')
     plt.tight_layout()
     plt.savefig(args.results_path)
+
+
+def get_trRosetta_log_prob(trRosetta, sequence, protein_id):
+    """Get the log probability of a ground truth structure for a given sequence by computing the trRosetta probability
+    of that structure given the sequence
+
+    Args:
+        trRosetta (nn.Module): a trRosetta model
+        sequence (str): a protein sequence
+        protein_id (str): the protein ID of the protein sequence
+    Returns:
+        log_prob (float): the log probability of the structure for the given sequence
+    """
+    # Get true distances
+    cb_coordinates_true = get_cb_coordinates(protein_id)
+    cb_distogram_true = compute_distogram(cb_coordinates_true)
+    cb_distogram_true_idx = torch.argmax(cb_distogram_true, dim=-1)
+    
+    with torch.no_grad():
+        # Get trRosetta-predicted distogram for sequence
+        cb_distogram_predicted = torch.tensor(trRosetta(sequence, seq_id=protein_id))
+        # Edit predicted distogram to correspond to a more sensible, ordered layout, with not-in-contact next to the largest distances
+        cb_distogram_predicted = torch.cat((cb_distogram_predicted[..., 1:], cb_distogram_predicted[..., :1]), dim=-1)
+        # Make the diagonal entries correspond to the lowest distance bin, not the not-in-contact bin
+        cb_distogram_predicted[:, :, 0].fill_diagonal_(1)
+        for i in range(1, 36):
+            cb_distogram_predicted[:, :, i].fill_diagonal_(0)
+        
+        # Get probability of true structure under predicted distograms.
+        probs = torch.gather(input=cb_distogram_predicted.cpu(), dim=-1, index=cb_distogram_true_idx.unsqueeze(-1))
+        log_probs = torch.log(probs)
+        log_prob = torch.sum(log_probs)
+
+    return log_prob
+
+def compare_probs(struct_to_seq_model, seq_model, struct, seq, decode_order, bayes_balance_factor=0., mask_type='bidirectional_mlm'):
+    """Compare probability of residues under several models and return the distributions p(seq|struct), p(seq), 
+    and p(struct|seq) over each amino acid in the sequence
+    """
+    probs = []
+    # TODO: remove for loop, pass in batch of sequences
+    for i in range(len(seq)):
+        p_seq_struct = struct_to_seq_model(seq=[seq], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([i]), mask_type=mask_type).clone()
+        p_seq = seq_model([seq], decode_order=decode_order, token_to_decode=torch.tensor([i]), mask_type=mask_type).clone()
+        p_seq_struct_div_p_seq = p_seq_struct / p_seq
+        p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
+        # For non-zero balance factor, return probabilities associated with balanced data
+        if bayes_balance_factor != 0:
+            p_seq_struct += bayes_balance_factor
+            p_seq += bayes_balance_factor
+            p_seq_struct_div_p_seq = p_seq_struct / p_seq
+            p_struct_seq = p_seq_struct_div_p_seq / p_seq_struct_div_p_seq.sum()
+        probs.append((p_seq_struct, p_seq, p_struct_seq))
+
+    return probs
 
 #  Experiment: 
 # Take a structure with a known sequence. Use p(seq|struct) and p(seq|struct)/p(seq) 

@@ -470,3 +470,22 @@ Beam 512 design from scratch ProteinMPNN
 ```
 python3 design.py --model_name protein_mpnn --protein_id spycatcher --decode_order n_to_c --fixed_positions 9 9 55 55 72 81 --decode_algorithm beam_medium --n_beams 512 --from_scratch
 ```
+
+# SpyCatcher Extended
+
+DSATHIKFSKRDIDGKELAGATMELRDSSGKTISTWISDGQVKDFYLMPGKYTFVETAAPDGYEVATAITFTVNEQGQVTVNGHHHHHHHHHH
+
+BayesDesign
+greedy design from scratch,     
+
+ProteinMPNN                     
+greedy design from scratch,     
+
+Greedy design from scratch BayesDesign
+```
+python3 design.py --model_name bayes_design --protein_id spycatcher_long --decode_order n_to_c --fixed_positions 10 10 56 56 83 93 --bayes_balance_factor .002 --decode_algorithm greedy
+```
+Greedy design from scratch ProteinMPNN
+```
+python3 design.py --model_name protein_mpnn --protein_id spycatcher_long --decode_order n_to_c --fixed_positions 10 10 56 56 83 93 --bayes_balance_factor .002 --decode_algorithm greedy
+```

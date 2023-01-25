@@ -38,14 +38,15 @@ RUN pip3 install torch --extra-index-url https://download.pytorch.org/whl/cu116
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install -r /tmp/requirements.txt
 
-# # Install ProteinMPNN
-# RUN cd $HOME && git clone -q https://github.com/dauparas/ProteinMPNN.git
-# # Checkout the hash that this codebase is based on
-# RUN cd $HOME/ProteinMPNN && git reset --hard e61ecb7e3c32e630ff7a34d16c3a43fcf8f8a8bd
-# RUN echo "export PYTHONPATH=$PYTHONPATH:$HOME/ProteinMPNN/" >> $HOME/.bashrc
 
+# Install hhblits
 RUN rm /etc/apt/sources.list.d/cuda.list
 RUN rm /etc/apt/sources.list.d/nvidia-ml.list
 RUN apt-get update && apt-get install --assume-yes --no-install-recommends --quiet cmake
+RUN cd $HOME && git clone https://github.com/soedinglab/hh-suite.git
+RUN cd $HOME/hh-suite && ls 
+RUN cd $HOME/hh-suite && cmake -DCMAKE_INSTALL_PREFIX=. .
+RUN cd $HOME/hh-suite && make -j 4 && make install
+RUN export PATH="$PATH:$HOME/hh-suite/bin:$HOME/hh-suite/scripts"
 
 ENTRYPOINT ["/bin/bash"]

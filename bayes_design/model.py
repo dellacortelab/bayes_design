@@ -2,9 +2,16 @@ import re
 import torch
 from torch import nn
 import numpy as np
+import os
+import subprocess
 import torch
 from transformers import XLNetTokenizer, XLNetLMHeadModel
 from .protein_mpnn.protein_mpnn_utils import ProteinMPNN
+
+from pathlib import Path
+from tr_rosetta_pytorch import trRosettaNetwork
+from tr_rosetta_pytorch.utils import preprocess
+from tr_rosetta_pytorch.cli import DEFAULT_MODEL_PATH
 
 from .utils import AMINO_ACID_ORDER
 
@@ -229,24 +236,7 @@ class ProteinMPNNWrapper(nn.Module):
         return probs[range(len(token_to_decode)), token_to_decode]
         # N x 20
 
-<<<<<<< HEAD
-        #     # Required for sampling
-        #     chain_M_pos = torch.ones(N, L).float().to(self.device)
-        #     bias_AAs_np = np.zeros(len(AMINO_ACID_ORDER))
-        #     bias_by_res = torch.zeros([N, L, len(AMINO_ACID_ORDER)]).to(self.device)
-        #     # Predict tokens except 'X'
-        #     omit_AAs_np = np.array([AA in ['X'] for AA in AMINO_ACID_ORDER]).astype(np.float32)
-        #     # randn determines the decoding order. The indices in the randn vector with the lowest values will be decoded first
-        #     randn = torch.argsort(torch.tensor(decode_order)).to(self.device)
-        #     out = self.model.sample(X=struct, randn=randn, S_true=seq, chain_mask=chain_M, chain_encoding_all=chain_encoding_all, residue_idx=residue_idx, mask=mask, chain_M_pos=chain_M_pos, bias_AAs_np=bias_AAs_np, omit_AAs_np=omit_AAs_np, bias_by_res=bias_by_res)
-        #     probs = out['probs']
-        # # Return the probabilities for th 0th chain and the 0th residue
-        # return probs[:, token_to_decode]
-
-class BayesDesignModel(nn.Module):
-=======
 class BayesDesign(nn.Module):
->>>>>>> master
     def __init__(self, device=None, bayes_balance_factor=0.002, **kwargs):
         super().__init__()
         if device is not None:
@@ -277,7 +267,7 @@ class BayesDesign(nn.Module):
 
 
 class TrRosettaWrapper():
-    def __init__(self, data_location='/data/msa', database='/data/uniref30/UniRef30_2022_02', device=None):
+    def __init__(self, data_location='./data/msa', database='./data/uniref30/UniRef30_2022_02', device=None):
 
         if device is not None:
             self.device = device
@@ -289,36 +279,36 @@ class TrRosettaWrapper():
         model_files = [*Path(DEFAULT_MODEL_PATH).glob('*.pt')]
         self.models = []
         for model_file in model_files[:1]:
-            trrosetta = trRosettaNetwork(
+            trRosetta = trRosettaNetwork(
                 filters = 64,
                 kernel = 3,
                 num_layers = 61
             )
-            trrosetta = trrosetta.to(self.device)
-            trrosetta.load_state_dict(torch.load(model_file, map_location=self.device))
-            trrosetta.eval()
-            self.models.append(trrosetta)
+            trRosetta = trRosetta.to(self.device)
+            trRosetta.load_state_dict(torch.load(model_file, map_location=self.device))
+            trRosetta.eval()
+            self.models.append(trRosetta)
 
         self.data_location = data_location
         os.makedirs(self.data_location, exist_ok=True)
 
         self.database = database
 
-    def __call__(self, seq, seq_id):
+    def __call__(self, seq, seq_id=""):
         """Pass a sequence through the trRosetta model and return the distogram
         Args:
             seq (str): a space-separated string representing the amino acid sequence
         Returns:
             distance ((L x L x 37) torch.Tensor): a distogram representing distance bin probabilities
         """
-        seq_path = os.path.join(self.data_location, f'{seq_id}.txt')
-        seq_msa_path = os.path.join(self.data_location, f'{seq_id}_msa.txt')
+        seq_path = os.path.join(self.data_location, f'{seq_id}_{seq}.txt')
+        seq_msa_path = os.path.join(self.data_location, f'msa_{seq_id}_{seq}.txt')
         # Make a fasta file with the sequence
         with open(seq_path, 'w') as f:
             f.write('>\n' + ''.join(seq.split()))
         # Get an MSA for the sequence
         if not os.path.exists(seq_msa_path):
-            out = subprocess.run(['/root/hh-suite/bin/hhblits', '-i', f'{seq_path}', '-oa3m', f'{seq_msa_path}', '-d', f'{self.database}'])
+            out = subprocess.run(['/root/hh-suite/bin/hhblits', '-v', '0', '-i', f'{seq_path}', '-oa3m', f'{seq_msa_path}', '-d', f'{self.database}'])
         x = preprocess(seq_msa_path).to(self.device)
         outputs = []
         with torch.no_grad():
@@ -379,4 +369,4 @@ class ESMIF1Wrapper(nn.Module):
     def forward(self):
         pass
 
-model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign}
+model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign, 'trRosetta':TrRosettaWrapper}
