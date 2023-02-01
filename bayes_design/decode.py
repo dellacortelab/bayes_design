@@ -112,7 +112,7 @@ def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
         if fixed_position_mask[idx] == True:
             # Do not change this token
             continue
-        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx, mask_type=mask_type)
+        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=torch.Tensor([idx]), mask_type=mask_type)
         next_item = torch.argmax(probs)
         log_probs.append(np.log(np.max(probs.detach().cpu().numpy())))
         aa = AMINO_ACID_ORDER[next_item]
@@ -133,7 +133,7 @@ def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
         if fixed_position_mask[idx] == True:
             # Do not change this token
             continue
-        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx, mask_type=mask_type).detach().cpu().numpy()
+        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=torch.Tensor([idx]), mask_type=mask_type).detach().cpu().numpy()
         next_item = np.random.choice(np.arange(20), p=probs)
         aa = AMINO_ACID_ORDER[next_item]
         current_seq = list(current_seq)
@@ -181,6 +181,14 @@ def beam_decode_slow(prob_model, struct, seq, decode_order, fixed_position_mask,
     return top_candidates[0][0]
 
 def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
+
+    # Get device of prob_model
+    device = next(prob_model.parameters()).device
+    # Get available gpu memory
+    gpu_mem = torch.cuda.get_device_properties(device).total_memory
+    # Get the number of concurrent sequences that can fit on one GPU
+    n_concurrent_seqs = int(196 / 32510 * (.9 * gpu_mem / 1e6))
+
     if from_scratch:
         mask_type = 'bidirectional_autoregressive'
     else:
@@ -194,7 +202,6 @@ def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from
         top_sequences = [seq for seq, score in top_candidates]
         seqs = [''.join(seq) for seq in top_sequences]
         # Chunk up predictions so they fit on one GPU
-        n_concurrent_seqs = 196
         probs_list = []
         for i in range(0, len(seqs), n_concurrent_seqs):
             probs = prob_model.forward(seq=seqs[i:i + n_concurrent_seqs], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([decode_idx]).expand(len(seqs)), mask_type=mask_type)
