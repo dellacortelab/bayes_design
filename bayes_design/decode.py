@@ -112,7 +112,7 @@ def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
         if fixed_position_mask[idx] == True:
             # Do not change this token
             continue
-        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx, mask_type=mask_type)
+        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([idx]), mask_type=mask_type)
         next_item = torch.argmax(probs)
         log_probs.append(np.log(np.max(probs.detach().cpu().numpy())))
         aa = AMINO_ACID_ORDER[next_item]
@@ -133,7 +133,7 @@ def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
         if fixed_position_mask[idx] == True:
             # Do not change this token
             continue
-        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=idx, mask_type=mask_type).detach().cpu().numpy()
+        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([idx]), mask_type=mask_type).detach().cpu().numpy()
         next_item = np.random.choice(np.arange(20), p=probs)
         aa = AMINO_ACID_ORDER[next_item]
         current_seq = list(current_seq)
