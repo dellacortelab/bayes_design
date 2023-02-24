@@ -31,19 +31,5 @@ docker exec -it bayes_dev /bin/bash
 ```
 - Redesign a protein backbone
 ```
-cd ./code && python3 design.py --model_name bayes_design --protein_id 6MRR --decode_order n_to_c --decode_algorithm beam --n_beams 128 --fixed_positions 67 68
-```
-## Citation
-```
-@article {Stern2022.12.28.521825,
-	author = {Stern, Jacob A. and Free, Tyler J. and Stern, Kimberlee L. and Gardiner, Spencer and Dalley, Nicholas A. and Bundy, Bradley C. and Price, Joshua L. and Wingate, David and Corte, Dennis Della},
-	title = {A probabilistic view of protein stability, conformational specificity, and design},
-	elocation-id = {2022.12.28.521825},
-	year = {2022},
-	doi = {10.1101/2022.12.28.521825},
-	publisher = {Cold Spring Harbor Laboratory},
-	URL = {https://www.biorxiv.org/content/early/2022/12/30/2022.12.28.521825},
-	eprint = {https://www.biorxiv.org/content/early/2022/12/30/2022.12.28.521825.full.pdf},
-	journal = {bioRxiv}
-}
+cd ./code && python3 design.py --model_name cs_design --protein_id 4GSB --protein_id_anti 2ERK --decode_order n_to_c --decode_algorithm beam --n_beams 128 --fixed_positions 16 16 31 34 52 52 62 62 65 65 68 69 147 165 183 184
 ```

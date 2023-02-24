@@ -258,5 +258,33 @@ class BayesDesign(nn.Module):
 
         return p_struct_seq
 
+class CSDesign(nn.Module):
+    def __init__(self, device=None, balance_factor=0.002, **kwargs):
+        super().__init__()
+        if device is not None:
+            self.device = device
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda:0")
+        else:
+            self.device = torch.device('cpu')
 
-model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign}
+        self.seq_struct_model = ProteinMPNNWrapper(device=device, **kwargs)
+
+        self.balance_factor = balance_factor
+
+    def forward(self, seq, struct_pro, struct_anti, decode_order, token_to_decode, mask_type='bidirectional_autoregressive'):
+        p_seq_struct_pro = self.seq_struct_model(seq=seq, struct=struct_pro, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
+        p_seq_struct_anti = self.seq_struct_model(seq=seq, struct=struct_anti, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
+
+        # Add a "balance factor" so that we don't end up with large probability ratios at the tails of the distributions
+        p_seq_struct_pro += self.balance_factor
+        p_seq_struct_anti += self.balance_factor
+        balanced_logits = (p_seq_struct_pro / p_seq_struct_anti)
+        
+        # Normalize probabilities
+        p_ratio = balanced_logits / balanced_logits.sum(dim=-1).unsqueeze(-1)
+
+        return p_ratio
+
+
+model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign, 'csdesign':CSDesign}

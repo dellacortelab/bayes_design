@@ -9,6 +9,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('--model_name', help="The model to use for protein sequence design", choices=list(model_dict.keys()), default='bayes_design')
 parser.add_argument('--protein_id', help="The PDB id of the protein to redesign", default='6MRR')
+parser.add_argument('--protein_id_anti', help="The PDB id of a known protein conformation to avoid. Must have same number of residues as the protein correspoding to --protein_id", default=None)
 parser.add_argument('--decode_order', help="The order to decode masked parts of the sequence", choices=list(decode_order_dict.keys()), default='n_to_c')
 parser.add_argument('--decode_algorithm', help="The algorithm used to decode masked parts of the sequence", choices=list(decode_algorithm_dict.keys()), default='beam')
 parser.add_argument('--fixed_positions', help="The beginnings and ends of residue ranges (includes endpoints [], 1-indexed) to remain fixed and not predicted, separated by spaces. Example: 3 10 14 14 17 20", nargs='*', type=int, default=[])
