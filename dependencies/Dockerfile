@@ -7,6 +7,7 @@ RUN \
   apt-get update -y && \
   # Install...
   apt-get install -y \
+  cmake \
   git \
   vim \
   wget \
@@ -44,8 +45,5 @@ RUN pip3 install -r /tmp/requirements.txt
 # RUN cd $HOME/ProteinMPNN && git reset --hard e61ecb7e3c32e630ff7a34d16c3a43fcf8f8a8bd
 # RUN echo "export PYTHONPATH=$PYTHONPATH:$HOME/ProteinMPNN/" >> $HOME/.bashrc
 
-RUN rm /etc/apt/sources.list.d/cuda.list
-RUN rm /etc/apt/sources.list.d/nvidia-ml.list
-RUN apt-get update && apt-get install --assume-yes --no-install-recommends --quiet cmake
 
 ENTRYPOINT ["/bin/bash"]

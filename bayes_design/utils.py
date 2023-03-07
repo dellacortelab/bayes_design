@@ -32,3 +32,76 @@ def get_fixed_position_mask(fixed_position_list, seq_len):
         fixed_range_end = fixed_position_list[i+1]
         fixed_position_mask[fixed_range_start:fixed_range_end] = 1.
     return fixed_position_mask
+
+
+def align_and_crop(seq_pro, seq_anti, struct_pro, struct_anti):
+    # Perform sequence alignment
+    alignments = pairwise2.align.globalxx(seq_pro, seq_anti, penalize_extend_when_opening=True)
+    aligned_seq_pro_tmp, aligned_seq_anti_tmp, score, start, end = alignments[0]
+    
+    # If a dash exists at the same position in both sequences, remove it
+    aligned_seq_pro = ''
+    aligned_seq_anti = ''
+    for i in range(len(aligned_seq_pro_tmp)):
+        if aligned_seq_pro_tmp[i] != '-' or aligned_seq_anti_tmp[i] != '-':
+            aligned_seq_pro += aligned_seq_pro_tmp[i]
+            aligned_seq_anti += aligned_seq_anti_tmp[i]    
+
+
+    # Insert '-' characters into sequences and zeros into structures
+    new_struct_pro = torch.zeros(len(aligned_seq_pro), 4, 3)
+    new_struct_anti = torch.zeros(len(aligned_seq_anti), 4, 3)
+    pro_idx = 0
+    mismatch_cnt = 0
+
+    for i in range(len(aligned_seq_pro)):
+        try:
+            # This takes care of the case when you reach the end of the original sequence
+            orig_residue = seq_pro[pro_idx]
+        except:
+            new_struct_pro[i] = torch.zeros(4, 3) * float('nan')
+            aligned_seq_pro = aligned_seq_pro[:i] + '-' + aligned_seq_pro[i+1:]
+            continue
+        if aligned_seq_pro[i] == '-' and orig_residue != '-' and mismatch_cnt <= 0:
+            # Only situation where you don't increment pro_idx
+            new_struct_pro[i] = torch.zeros(4, 3) * float('nan')
+        elif aligned_seq_pro[i] != '-' and orig_residue == '-':
+            new_struct_pro[i] = torch.zeros(4, 3) * float('nan')
+            aligned_seq_pro = aligned_seq_pro[:i] + '-' + aligned_seq_pro[i+1:]
+            pro_idx += 1
+            mismatch_cnt += 1
+        elif aligned_seq_pro[i] == '-' and orig_residue != '-' and mismatch_cnt > 0:
+            new_struct_pro[i] = torch.zeros(4, 3) * float('nan')
+            pro_idx += 1
+            mismatch_cnt -= 1
+        else:
+            new_struct_pro[i] = struct_pro[pro_idx]
+            pro_idx += 1
+
+    anti_idx = 0
+    mismatch_cnt = 0
+    for i in range(len(aligned_seq_anti)):
+        try:
+            # fails if you reach the end of the sequence
+            orig_residue = seq_anti[anti_idx]
+        except:
+            new_struct_anti[i] = torch.zeros(4, 3) * float('nan')
+            aligned_seq_pro = aligned_seq_anti[:i] + '-' + aligned_seq_anti[i+1:]
+            continue
+        if aligned_seq_anti[i] == '-' and orig_residue != '-' and mismatch_cnt <= 0:
+            # Only situation where you don't increment anti_idx
+            new_struct_anti[i] = torch.zeros(4, 3) * float('nan')
+        elif aligned_seq_anti[i] != '-' and orig_residue == '-':
+            new_struct_anti[i] = torch.zeros(4, 3) * float('nan')
+            aligned_seq_pro = aligned_seq_anti[:i] + '-' + aligned_seq_anti[i+1:]
+            anti_idx += 1
+            mismatch_cnt += 1
+        elif aligned_seq_anti[i] == '-' and orig_residue != '-' and mismatch_cnt > 0:
+            new_struct_anti[i] = torch.zeros(4, 3) * float('nan')
+            anti_idx += 1
+            mismatch_cnt -= 1
+        else:
+            new_struct_anti[i] = struct_anti[anti_idx]
+            anti_idx += 1
+
+    return aligned_seq_pro, aligned_seq_anti, new_struct_pro, new_struct_anti

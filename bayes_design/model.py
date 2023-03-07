@@ -213,8 +213,11 @@ class ProteinMPNNWrapper(nn.Module):
                 decode_order = torch.tensor(np.array([np.append(np.delete(decode_order, decode_order.index(tok)).tolist(), tok) for tok in token_to_decode]))
             
             struct = struct.expand(N, *struct.shape).to(self.device)
-            # Default values
-            mask = torch.ones(N, L).float().to(self.device)
+            # `mask` masks positions that are missing structural information
+            mask = torch.isfinite(torch.sum(struct,(2,3))).to(torch.float32)
+            isnan = torch.isnan(struct)
+            struct[isnan] = 0.
+            # `chain_M` masks positions in other chains of homomeric proteins to prevent the protein from copying another similar chain. For now we set it to the default value.
             chain_M = torch.ones(N, L).float().to(self.device)
             chain_encoding_all = torch.ones(N, L).float().to(self.device)
             residue_idx = torch.arange(L).expand(N, L).to(self.device)
@@ -272,7 +275,8 @@ class CSDesign(nn.Module):
 
         self.balance_factor = balance_factor
 
-    def forward(self, seq, struct_pro, struct_anti, decode_order, token_to_decode, mask_type='bidirectional_autoregressive'):
+    def forward(self, seq, struct, decode_order, token_to_decode, mask_type='bidirectional_autoregressive'):
+        struct_pro, struct_anti = struct
         p_seq_struct_pro = self.seq_struct_model(seq=seq, struct=struct_pro, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
         p_seq_struct_anti = self.seq_struct_model(seq=seq, struct=struct_anti, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
 
@@ -287,4 +291,4 @@ class CSDesign(nn.Module):
         return p_ratio
 
 
-model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign, 'csdesign':CSDesign}
+model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign, 'cs_design':CSDesign}

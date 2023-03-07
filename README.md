@@ -32,4 +32,6 @@ docker exec -it bayes_dev /bin/bash
 - Redesign a protein backbone
 ```
 cd ./code && python3 design.py --model_name cs_design --protein_id 4GSB --protein_id_anti 2ERK --decode_order n_to_c --decode_algorithm beam --n_beams 128 --fixed_positions 16 16 31 34 52 52 62 62 65 65 68 69 147 165 183 184
+
+cd ./code && python3 design.py --model_name cs_design --protein_id 4GSB --protein_id_anti 2ERK --decode_order n_to_c --decode_algorithm beam --n_beams 128 --fixed_positions 1 164 206 358
 ```

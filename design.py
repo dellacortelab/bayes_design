@@ -1,9 +1,10 @@
 import argparse
+from Bio import pairwise2
 import torch
 
 from bayes_design.decode import decode_order_dict, decode_algorithm_dict
 from bayes_design.model import model_dict
-from bayes_design.utils import get_protein, get_fixed_position_mask
+from bayes_design.utils import get_protein, get_fixed_position_mask, align_and_crop
 
 parser = argparse.ArgumentParser()
 
@@ -22,6 +23,7 @@ experiment_parser = subparsers.add_parser('experiment')
 experiment_parser.add_argument('--name', help='The name of the experiment to run')
 
 
+
 def example_design(args):
 
     device = torch.device(f"cuda:{args.device}" if (torch.cuda.is_available()) else "cpu")
@@ -34,6 +36,12 @@ def example_design(args):
     # Get sequence and structure of protein to redesign
     seq, struct = get_protein(args.protein_id)
     orig_seq = seq
+    if args.protein_id_anti is not None:
+        assert args.model_name == 'cs_design', "Anti-protein design is only supported for the cs_design model"
+        seq_anti, struct_anti = get_protein(args.protein_id_anti)
+        # Align the two sequences and crop them to the minumum overlapping portion
+        seq, seq_anti, struct, struct_anti = align_and_crop(seq, seq_anti, struct, struct_anti)
+        struct = (struct, struct_anti)
 
     fixed_position_mask = get_fixed_position_mask(fixed_position_list=args.fixed_positions, seq_len=len(seq))
     masked_seq = ''.join(['-' if not fixed else char for char, fixed in zip(seq, fixed_position_mask)])
