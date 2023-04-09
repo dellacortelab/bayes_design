@@ -34,7 +34,7 @@ class XLNetWrapper(nn.Module):
         xlnet_vocab_dict['▁X'] = xlnet_vocab_dict['X']
         self.canonical_idx_to_xlnet_idx = torch.tensor([xlnet_vocab_dict['▁' + aa] for aa in AMINO_ACID_ORDER])
 
-    def forward(self, seq, decode_order, token_to_decode, struct=None, mask_type='bidirectional_autoregressive'):
+    def forward(self, seq, decode_order, token_to_decode, struct=None, mask_type='bidirectional_autoregressive', temperature=1.0):
         """Accept an amino acid sequence, return class probabilities for the next token
         Args:
             seq (len N list of len L_seq str): a string representation of an amino 
@@ -159,7 +159,8 @@ class XLNetWrapper(nn.Module):
             index_corrected_logits = out.logits[:, 0, self.canonical_idx_to_xlnet_idx]
             # Ignore the last entry, corresponding to 'X'
             index_corrected_logits = index_corrected_logits[:, :-1]
-            probs = torch.nn.functional.softmax(index_corrected_logits, dim=-1)
+            # Get temperature-adjusted probabilities
+            probs = torch.nn.functional.softmax(index_corrected_logits / temperature, dim=-1)
             
         return probs
         
@@ -188,7 +189,7 @@ class ProteinMPNNWrapper(nn.Module):
         self.model.eval()
         print("Model loaded")
     
-    def forward(self, seq, struct, decode_order, token_to_decode, mask_type):
+    def forward(self, seq, struct, decode_order, token_to_decode, mask_type, temperature=1.0):
         """Accept an amino acid sequence and protein structure 
         coordinates, return class probabilities for the next token
         Args:
@@ -226,9 +227,9 @@ class ProteinMPNNWrapper(nn.Module):
             chain_encoding_all = torch.ones(N, L).float().to(self.device)
             residue_idx = torch.arange(L).expand(N, L).to(self.device)
 
-            log_probs = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, randn=None, decoding_order=decode_order.to(self.device))
-
-            probs = torch.exp(log_probs)
+            _, logits = self.model(X=struct, S=seq, mask=mask, chain_M=chain_M, residue_idx=residue_idx, chain_encoding_all=chain_encoding_all, use_input_decoding_order=True, randn=None, decoding_order=decode_order.to(self.device))
+            # Get temperature-adjusted probabilities
+            probs = torch.nn.functional.softmax(logits / temperature, dim=-1)
             # N x L x 20
             # Ignore the last entry, corresponding to 'X', and normalize
             probs = probs[:, :, :-1] / probs[:, :, :-1].sum(dim=-1).unsqueeze(-1)
@@ -251,9 +252,9 @@ class BayesDesign(nn.Module):
 
         self.bayes_balance_factor = bayes_balance_factor
 
-    def forward(self, seq, struct, decode_order, token_to_decode, mask_type='bidirectional_autoregressive'):
-        p_seq = self.seq_model(seq=seq, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
-        p_seq_struct = self.seq_struct_model(seq=seq, struct=struct, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
+    def forward(self, seq, struct, decode_order, token_to_decode, mask_type='bidirectional_autoregressive', temperature=1.0):
+        p_seq = self.seq_model(seq=seq, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type, temperature=temperature).clone()
+        p_seq_struct = self.seq_struct_model(seq=seq, struct=struct, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type, temperature=temperature).clone()
 
         # Add a "balance factor" so that we don't end up with large probability ratios at the tails of the distributions
         p_seq += self.bayes_balance_factor

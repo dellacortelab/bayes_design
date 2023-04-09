@@ -101,7 +101,7 @@ def get_n_to_c_decode_order(seq):
 # Decode Algorithms
 ####################################################################################
 
-def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
+def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, **kwargs):
     if from_scratch:
         mask_type = 'bidirectional_autoregressive'
     else:
@@ -119,29 +119,28 @@ def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
         current_seq = list(current_seq)
         current_seq[idx] = aa
         current_seq = ''.join(current_seq)
-    print("log probs:", log_probs)
-    print("log prob:", np.array(log_probs).sum())
     return current_seq
 
-def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
+def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, temperature=1.0, **kwargs):
     if from_scratch:
         mask_type = 'bidirectional_autoregressive'
     else:
         mask_type = 'bidirectional_mlm'
     current_seq = seq
     for idx in decode_order:
+        print("j:", idx)
         if fixed_position_mask[idx] == True:
             # Do not change this token
             continue
-        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([idx]), mask_type=mask_type).detach().cpu().numpy()
-        next_item = np.random.choice(np.arange(20), p=probs)
+        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([idx]), mask_type=mask_type, temperature=temperature).detach().cpu().numpy()
+        next_item = np.random.choice(np.arange(20), p=probs[0])
         aa = AMINO_ACID_ORDER[next_item]
         current_seq = list(current_seq)
         current_seq[idx] = aa
         current_seq = ''.join(current_seq)
     return current_seq
 
-def random_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
+def random_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, **kwargs):
     current_seq = seq
     for idx in decode_order:
         if fixed_position_mask[idx] == True:
@@ -154,7 +153,7 @@ def random_decode(prob_model, struct, seq, decode_order, fixed_position_mask, fr
         current_seq = ''.join(current_seq)
     return current_seq
 
-def beam_decode_slow(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
+def beam_decode_slow(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams, **kwargs):
     if from_scratch:
         mask_type = 'bidirectional_autoregressive'
     else:
@@ -180,7 +179,7 @@ def beam_decode_slow(prob_model, struct, seq, decode_order, fixed_position_mask,
     top_candidates = [(''.join(seq), score) for (seq, score) in top_candidates]
     return top_candidates[0][0]
 
-def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams):
+def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch, n_beams, **kwargs):
 
     # Get device of prob_model
     device = next(prob_model.parameters()).device
@@ -204,7 +203,7 @@ def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from
         # Chunk up predictions so they fit on one GPU
         probs_list = []
         for i in range(0, len(seqs), n_concurrent_seqs):
-            probs = prob_model.forward(seq=seqs[i:i + n_concurrent_seqs], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([decode_idx]).expand(len(seqs)), mask_type=mask_type)
+            probs = prob_model.forward(seq=seqs[i:i + n_concurrent_seqs], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([decode_idx]).expand(len(seqs[i:i + n_concurrent_seqs])), mask_type=mask_type)
             probs_list.append(probs)
         top_candidate_probs = torch.concat(probs_list, dim=0)
         all_candidates = []
