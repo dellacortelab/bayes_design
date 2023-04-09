@@ -20,7 +20,7 @@ python3 design.py --model_name bayes_design --protein_id 6MRR --decode_order n_t
 ```
 git clone https://github.com/dellacortelab/bayes_design.git
 ```
-- Build container
+- Build docker image (should take ~5 minutes)
 ```
 docker build -t bayes_design -f ./bayes_design/dependencies/Dockerfile ./bayes_design/dependencies
 ```
@@ -33,6 +33,7 @@ docker exec -it bayes_dev /bin/bash
 ```
 cd ./code && python3 design.py --model_name bayes_design --protein_id 6MRR --decode_order n_to_c --decode_algorithm beam --n_beams 128 --fixed_positions 67 68
 ```
+On a V100 GPU, the greedy algorithm predicts ~10 residues/s and beam search with 128 beams predicts 1 residue every 2s.
 
 ## Citation
 ```
