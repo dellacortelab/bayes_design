@@ -33,6 +33,7 @@ docker exec -it bayes_dev /bin/bash
 ```
 cd ./code && python3 design.py --model_name bayes_design --protein_id 6MRR --decode_order n_to_c --decode_algorithm beam --n_beams 128 --fixed_positions 67 68
 ```
+
 ## Citation
 ```
 @article {Stern2022.12.28.521825,
