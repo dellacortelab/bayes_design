@@ -7,6 +7,7 @@ import subprocess
 import torch
 from transformers import XLNetTokenizer, XLNetLMHeadModel
 from .protein_mpnn.protein_mpnn_utils import ProteinMPNN
+import pickle as pkl
 
 from pathlib import Path
 from tr_rosetta_pytorch import trRosettaNetwork
@@ -370,4 +371,14 @@ class ESMIF1Wrapper(nn.Module):
     def forward(self):
         pass
 
-model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign, 'trRosetta':TrRosettaWrapper}
+class PSSM():
+    def __init__(self, pssm_path):
+        # load pssm from pickle
+        with open(pssm_path, 'rb') as f:
+            self.pssm = pkl.load(f)
+
+    def __call__(self, seq, struct, decode_order, token_to_decode, mask_type):
+        return self.pssm[token_to_decode, :]
+
+
+model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign, 'pssm':PSSM, 'trRosetta':TrRosettaWrapper}

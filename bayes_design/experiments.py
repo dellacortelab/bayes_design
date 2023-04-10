@@ -5,30 +5,39 @@ import os
 from matplotlib import pyplot as plt
 import matplotlib
 from PIL import Image
+import pickle as pkl
 
 from bayes_design.decode import decode_order_dict, decode_algorithm_dict
 from bayes_design.evaluate import metric_dict
 from bayes_design.model import model_dict, TrRosettaWrapper
 from bayes_design.utils import get_fixed_position_mask, get_protein, get_cb_coordinates, compute_distogram, AMINO_ACID_ORDER
 
+
 def compare_seq_metric(args):
     seq, structure = get_protein(args.protein_id)
     device = torch.device("cuda:1" if (torch.cuda.is_available()) else "cpu")
     fixed_position_mask = get_fixed_position_mask(fixed_position_list=args.fixed_positions, seq_len=len(seq))
     
-    if args.from_scratch:
-        mask_type = 'bidirectional_autoregressive'
-    else:
+    if args.redesign:
         mask_type = 'bidirectional_mlm'
-
+    else:
+        mask_type = 'bidirectional_autoregressive'
+    
     if args.model_name == 'bayes_design':
         prob_model = model_dict[args.model_name](device=device, bayes_balance_factor=args.bayes_balance_factor)
-    else:
+    elif args.model_name == 'protein_mpnn':
         prob_model = model_dict[args.model_name](device=device)
-        
+    elif args.model_name == 'xlnet':
+        prob_model = model_dict[args.model_name](device=device)
+    elif args.model_name == 'pssm':
+        prob_model = model_dict[args.model_name](args.pssm_path)
+
+    scores = []    
     for seq in args.sequences:
         metric = metric_dict[args.metric](seq=seq, prob_model=prob_model, decode_order=args.decode_order, structure=structure, fixed_position_mask=fixed_position_mask, mask_type=mask_type)
-        print(f'Metric {args.metric}:', metric)
+        scores.append(metric)
+    
+    return scores
         
 
 def generate_sequence_variants(orig_seq, num_variants=10, perc_residues_to_mutate=0.1):
@@ -96,6 +105,27 @@ def compare_struct_correlation(args):
     fig.savefig(os.path.join(args.results_dir, f'{args.protein_id}_protein_mpnn_trRosetta_scatter.png'))
     plt.close(fig)
 
+
+def make_pssm(args):
+    sequences_path = args.sequences_path
+    pssm_path = args.pssm_path
+    designed_seqs = []
+    with open(sequences_path, 'r') as f:
+        for line in f:
+            designed_seqs.append(line.strip())
+
+    L = len(designed_seqs[0])
+    char_to_index_dict = {char:i for i, char in enumerate(AMINO_ACID_ORDER)}
+    # Calculate position-specific scoring matrix (PSSM) for designed sequences
+    pssm_cnt_matrix = np.zeros((L, 20))
+    
+    for i, designed_seq in enumerate(designed_seqs):
+        for j, char in enumerate(designed_seq):
+            pssm_cnt_matrix[j, char_to_index_dict[char]] += 1
+
+    pssm = pssm_cnt_matrix / len(designed_seqs)
+    with open(pssm_path, 'wb') as f:
+        pkl.dump(pssm, f)
 
 def viz_probs(args):
     """Compare p(seq|struct)/p(seq), p(seq), and p(seq|struct), across all residues, highlighting top 1 in blue, second in green, third in red
@@ -212,6 +242,23 @@ def compare_probs(struct_to_seq_model, seq_model, struct, seq, decode_order, bay
         probs.append((p_seq_struct, p_seq, p_struct_seq))
 
     return probs
+
+def make_hist(args):
+    # Take a list of sequences
+    # Evaluate the probability of each sequence under the model
+    # Make a histogram of the probabilities
+    scores = compare_seq_metric(args)
+    plt.hist(scores, bins=100)
+    plt.xlabel(f'{args.metric}')
+    plt.savefig(os.path.join(args.results_dir, f'{args.model_name}_{args.metric}_{args.protein_id}_hist.png'))
+
+def seq_filter(args):
+    scores = compare_seq_metric(args)
+    seqs = args.sequences
+    top = sorted(zip(scores, seqs), reverse=True)[:args.n_seqs]
+    print(top)
+
+
 
 #  Experiment: 
 # Take a structure with a known sequence. Use p(seq|struct) and p(seq|struct)/p(seq) 
