@@ -256,6 +256,10 @@ def seq_filter(args):
     scores = compare_seq_metric(args)
     seqs = args.sequences
     top = sorted(zip(scores, seqs), reverse=True)[:args.n_seqs]
+    top_sequences_path = os.path.splitext(args.sequences_path)[0] + '_top.txt'
+    with open(top_sequences_path, 'w') as f:
+        for score, seq in top:
+            f.write(f'{seq}\n')
     print(top)
 
 

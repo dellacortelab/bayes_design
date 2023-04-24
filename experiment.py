@@ -58,6 +58,7 @@ viz_probs_parser.set_defaults(func=viz_probs)
 
 
 pssm_parser = subparsers.add_parser('make_pssm')
+pssm_parser.add_argument('--sequences', help='String representations of the protein sequence to redesign', nargs='+', default=None)
 pssm_parser.add_argument('--sequences_path', help='Path to the sequence file containing >1 sequence', required=True)
 pssm_parser.add_argument('--pssm_path', help='Path to the pssm file', required=True)
 pssm_parser.set_defaults(func=make_pssm)
@@ -103,7 +104,7 @@ seq_filter_parser.set_defaults(func=seq_filter)
 def parse_seq(args):
     """Parse the sequence from the appropriate command line argument"""
     if args.sequences is not None:
-        return args.sequences
+        return args
     elif args.sequences_path is not None:
         args.sequences = []
         with open(args.sequences_path, 'r') as f:

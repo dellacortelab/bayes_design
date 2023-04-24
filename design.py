@@ -66,10 +66,6 @@ def example_design(args):
         designed_seq = decode_algorithm_dict[args.decode_algorithm](prob_model=prob_model, struct=struct, seq=seq, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=from_scratch, temperature=args.temperature, n_beams=args.n_beams)
         designed_seqs.append(designed_seq)
 
-        # save designed sequences
-        with open('designed_seqs.pkl', 'wb') as f:
-            pkl.dump(designed_seqs, f)
-
     with open(os.path.join(args.results_dir, f'{args.model_name}_{args.protein_id}_sequences.txt'), 'w') as f:
         for seq in designed_seqs:
             f.write(seq + '\n')
