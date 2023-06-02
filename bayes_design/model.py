@@ -156,13 +156,14 @@ class XLNetWrapper(nn.Module):
             
         with torch.inference_mode():
             out = self.model(input_ids.to(self.device), perm_mask=perm_mask.to(self.device), target_mapping=target_mapping.to(self.device))
-            # logits has shape [batch_size, 1, config.vocab_size]
+            # logits has shape [batch_size, 1, config.vocab_size] (1 is num_tokens_to_predict)
             index_corrected_logits = out.logits[:, 0, self.canonical_idx_to_xlnet_idx]
             # Ignore the last entry, corresponding to 'X'
             index_corrected_logits = index_corrected_logits[:, :-1]
             # Get temperature-adjusted probabilities
             probs = torch.nn.functional.softmax(index_corrected_logits / temperature, dim=-1)
-            
+            probs = probs / probs.sum(dim=-1, keepdim=True)
+
         return probs
         
 class ProteinMPNNWrapper(nn.Module):
@@ -223,7 +224,10 @@ class ProteinMPNNWrapper(nn.Module):
             
             struct = struct.expand(N, *struct.shape).to(self.device)
             # Default values
-            mask = torch.ones(N, L).float().to(self.device)
+            # `mask` masks positions that are missing structural information
+            mask = torch.isfinite(torch.sum(struct,(2,3))).to(torch.float32)
+            isnan = torch.isnan(struct)
+            struct[isnan] = 0.
             chain_M = torch.ones(N, L).float().to(self.device)
             chain_encoding_all = torch.ones(N, L).float().to(self.device)
             residue_idx = torch.arange(L).expand(N, L).to(self.device)
@@ -232,9 +236,12 @@ class ProteinMPNNWrapper(nn.Module):
             # Get temperature-adjusted probabilities
             probs = torch.nn.functional.softmax(logits / temperature, dim=-1)
             # N x L x 20
-            # Ignore the last entry, corresponding to 'X', and normalize
-            probs = probs[:, :, :-1] / probs[:, :, :-1].sum(dim=-1).unsqueeze(-1)
+            # Ignore last entry, corresponding to 'X'
+            probs = probs[:, :, :-1]
+            probs = probs / probs.sum(dim=-1, keepdim=True)
             
+        # Note that unlike XLNet, ProteinMPNN gives probabilities for all residues, not just the one to decode. 
+        # So here we extract the probabilities for the residue to decode.
         return probs[range(len(token_to_decode)), token_to_decode]
         # N x 20
 

@@ -489,3 +489,6 @@ Greedy design from scratch ProteinMPNN
 ```
 python3 design.py --model_name protein_mpnn --protein_id spycatcher_long --decode_order n_to_c --fixed_positions 10 10 56 56 83 93 --bayes_balance_factor .002 --decode_algorithm greedy
 ```
+
+# Steered evolution
+python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order n_to_c --decode_algorithm combinations --fixed_positions 1 47 54 83 93 167 172 179

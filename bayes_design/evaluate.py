@@ -7,12 +7,11 @@ import torch
 import numpy as np
 import math
 
-from bayes_design.decode import decode_order_dict
 from bayes_design.model import model_dict
 from bayes_design.utils import get_protein, AMINO_ACID_ORDER
 
 
-def evaluate_log_prob(seq, prob_model, decode_order, fixed_position_mask, mask_type, structure=None):
+def evaluate_log_prob(seq, prob_model, decode_order, fixed_position_mask, mask_type, structure=None, exclude_aa=['C']):
     """
     Evaluate the log probability of the structure for the sequence under a 
     sequence to structure model. This measures p(struct|seq) for a designed sequence.
@@ -32,14 +31,15 @@ def evaluate_log_prob(seq, prob_model, decode_order, fixed_position_mask, mask_t
         sequence (str): a string (no spaces) representing an amino acid sequence
         seq_to_struct_model (nn.Module): a network taking as input a 
     """
-    masked_seq = ''.join(['-' if not fixed else char for char, fixed in zip(seq, fixed_position_mask)])
     n_fixed_positions = int(fixed_position_mask.sum())
     n_predicted_positions = len(seq) - n_fixed_positions
 
     # Decode order defines the order in which the masked positions are predicted
-    decode_order = decode_order_dict[decode_order](masked_seq)
     token_to_decode = torch.tensor(decode_order[n_fixed_positions:])
     probs = prob_model(seq=[seq]*n_predicted_positions, struct=structure, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type)
+    for aa in exclude_aa:
+        probs[:, AMINO_ACID_ORDER.index(aa)] = 0
+    probs = probs / probs.sum(dim=1, keepdim=True)
     
     log_prob = 0
     for i, tok in enumerate(token_to_decode):
@@ -60,12 +60,12 @@ def evaluate_rmsd(sequence, seq_to_struct_model, targ_struct):
     (measured by evaluate_log_prob).
     """
 
-def evaluate_perplexity(seq, prob_model, decode_order, structure=None, fixed_position_mask=None, mask_type=None):
+def evaluate_perplexity(seq, prob_model, decode_order, structure=None, fixed_position_mask=None, mask_type=None, exclude_aa=['C']):
     """
     Evaluate the perplexity of the sequence under the model. If fixed positions are provided, they
     are excluded from the perplexity calculation.
     """
-    log_prob = evaluate_log_prob(seq=seq, prob_model=prob_model, decode_order=decode_order, structure=structure, fixed_position_mask=fixed_position_mask, mask_type=mask_type)
+    log_prob = evaluate_log_prob(seq=seq, prob_model=prob_model, decode_order=decode_order, structure=structure, fixed_position_mask=fixed_position_mask, mask_type=mask_type, exclude_aa=exclude_aa)
     n_fixed_positions = fixed_position_mask.sum()
     n = len(seq) - n_fixed_positions
     perplexity = np.exp(-1/n*log_prob)

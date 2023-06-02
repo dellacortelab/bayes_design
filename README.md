@@ -49,3 +49,65 @@ On a V100 GPU, the greedy algorithm predicts ~10 residues/s and beam search with
 	journal = {bioRxiv}
 }
 ```
+
+
+# Experiments on designed sequences
+Evaluate the probability of a designed sequence under a probability model
+```
+python3 experiment.py compare_seq_metric --metric log_prob --protein_id 1PIN --model_name bayes_design --decode_order n_to_c --fixed_positions 34 34 --sequences MLPEGWVKQRNPITGEDVCFNTLTHEMTKFEPQG
+
+python3 experiment.py make_pssm --protein_id 1PIN --model_name pssm --pssm_path ./results/bayes_design_1PIN_pssm.pkl --decode_order n_to_c --fixed_positions 34 34 --sequences ./results/bayes_design_1PIN_sequences.txt
+
+python3 experiment.py make_hist --protein_id 1PIN --model_name pssm --pssm_path ./results/bayes_design_1PIN_pssm.pkl --metric log_prob --decode_order n_to_c --fixed_positions 34 34 --sequences_path ./results/bayes_design_1PIN_sequences.txt
+
+python3 experiment.py seq_filter --protein_id 1PIN --model_name pssm --pssm_path ./results/bayes_design_1PIN_pssm.pkl --metric log_prob --decode_order n_to_c --fixed_positions 34 34 --sequences_path ./results/bayes_design_1PIN_sequences.txt
+```
+
+BayesDesign WW
+python3 experiment.py seq_filter --protein_id 1PIN --model_name pssm --pssm_path ./results/bayes_design_1PIN_pssm.pkl --metric log_prob --decode_order n_to_c --fixed_positions 34 34 --sequences_path ./results/bayes_design_1PIN_sequences.txt --n_seqs 3
+
+Result: [(-60.534150819590586, 'MLPQGWQAKQDRDTNQWVYRNWITNKITFNKPRG'), (-62.07557004996536, 'KLPEGWIETKDVIHGKTQYHNVNLNETMEEQPVG'), (-62.343200271562175, 'ALIEVWQKQKDPETGQTKYLNVGKGERTPQRPKG')]
+
+ProteinMPNN WW
+python3 experiment.py seq_filter --protein_id 1PIN --model_name pssm --pssm_path ./results/protein_mpnn_1PIN_pssm.pkl --metric log_prob --decode_order n_to_c --fixed_positions 34 34 --sequences_path ./results/protein_mpnn_1PIN_sequences.txt --n_seqs 3
+
+Result: [(-43.503443719475136, 'ALPTGWEEKIDPVTNQLIYYNVKTKETTTEKPVG'), (-43.567347443909554, 'ELPEGWVEMVDIKTGEVVYYNDITKEITKEKPVG'), (-45.31501494556361, 'ALPAGWEEIIDPETGKVQYYNSQTKEVTTARPIG')]
+
+
+ProteinMPNN NanoLuc Full Redesign
+python3 design.py --model_name protein_mpnn --protein_id nanoluc --decode_order n_to_c --decode_algorithm sample --temperature 1. --n_designs 1000 --fixed_positions 1 9
+
+python3 experiment.py make_pssm --pssm_path ./results/protein_mpnn_nanoluc_full_pssm.pkl --sequences_path ./results/protein_mpnn_nanoluc_full_sequences.txt
+
+python3 experiment.py seq_filter --protein_id nanoluc --model_name pssm --pssm_path ./results/protein_mpnn_nanoluc_full_pssm.pkl --metric log_prob --decode_order n_to_c  --fixed_positions 1 9 --sequences_path ./results/protein_mpnn_nanoluc_full_sequences.txt --n_seqs 10
+
+
+
+ProteinMPNN NanoLuc Partial Redesign
+python3 design.py --model_name protein_mpnn --protein_id nanoluc --decode_order n_to_c --decode_algorithm sample --temperature 1. --n_designs 1000 --fixed_positions 1 62 97 179
+
+python3 experiment.py make_pssm --pssm_path ./results/protein_mpnn_nanoluc_partial_pssm.pkl --sequences_path ./results/protein_mpnn_nanoluc_partial_sequences.txt
+
+python3 experiment.py seq_filter --protein_id nanoluc --model_name pssm --pssm_path ./results/protein_mpnn_nanoluc_partial_pssm.pkl --metric log_prob --decode_order n_to_c --fixed_positions 1 62 97 179 --sequences_path ./results/protein_mpnn_nanoluc_partial_sequences.txt --n_seqs 10
+
+
+
+BayesDesign NanoLuc Full Redesign
+python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order n_to_c --decode_algorithm sample --temperature 1. --n_designs 1000 --fixed_positions 1 9
+
+python3 experiment.py make_pssm --pssm_path ./results/bayes_design_nanoluc_full_pssm.pkl --sequences_path ./results/bayes_design_nanoluc_full_sequences.txt
+
+python3 experiment.py seq_filter --protein_id nanoluc --model_name pssm --pssm_path ./results/bayes_design_nanoluc_full_pssm.pkl --metric log_prob --decode_order n_to_c --fixed_positions 1 9  --sequences_path ./results/bayes_design_nanoluc_full_sequences.txt --n_seqs 10
+
+
+
+BayesDesign NanoLuc Partial Redesign
+python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order n_to_c --decode_algorithm sample --temperature 1. --n_designs 1000 --fixed_positions  1 62 97 179
+
+python3 experiment.py make_pssm --pssm_path ./results/bayes_design_nanoluc_partial_pssm.pkl --sequences_path ./results/bayes_design_nanoluc_partial_sequences.txt
+
+python3 experiment.py seq_filter --protein_id nanoluc --model_name pssm --pssm_path ./results/bayes_design_nanoluc_partial_pssm.pkl --metric log_prob --decode_order n_to_c --fixed_positions 1 62 97 179 --sequences_path ./results/bayes_design_nanoluc_partial_sequences.txt --n_seqs 10
+
+
+ProteinMPNN NanoLuc Partial Redesign
+python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order n_to_c --decode_algorithm max_prob_decode --n_designs 1 --fixed_positions 1 47 54 83 93 167 172 179

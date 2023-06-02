@@ -34,10 +34,14 @@ def compare_seq_metric(args):
 
     scores = []    
     for seq in args.sequences:
-        metric = metric_dict[args.metric](seq=seq, prob_model=prob_model, decode_order=args.decode_order, structure=structure, fixed_position_mask=fixed_position_mask, mask_type=mask_type)
+        masked_seq = ''.join(['-' if not fixed else char for char, fixed in zip(seq, fixed_position_mask)])
+        # Decode order defines the order in which the masked positions are predicted
+        decode_order = decode_order_dict[args.decode_order](masked_seq)
+        metric = metric_dict[args.metric](seq=seq, prob_model=prob_model, decode_order=decode_order, structure=structure, fixed_position_mask=fixed_position_mask, mask_type=mask_type)
         scores.append(metric)
     
     return scores
+    
         
 
 def generate_sequence_variants(orig_seq, num_variants=10, perc_residues_to_mutate=0.1):
