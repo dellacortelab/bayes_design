@@ -11,7 +11,7 @@ from bayes_design.model import model_dict
 from bayes_design.utils import get_protein, AMINO_ACID_ORDER
 
 
-def evaluate_log_prob(seq, prob_model, decode_order, fixed_position_mask, mask_type, structure=None, exclude_aa=['C']):
+def evaluate_log_prob(seq, prob_model, decode_order, fixed_position_mask, mask_type, structure=None, exclude_aa=[]):
     """
     Evaluate the log probability of the structure for the sequence under a 
     sequence to structure model. This measures p(struct|seq) for a designed sequence.
@@ -60,7 +60,7 @@ def evaluate_rmsd(sequence, seq_to_struct_model, targ_struct):
     (measured by evaluate_log_prob).
     """
 
-def evaluate_perplexity(seq, prob_model, decode_order, structure=None, fixed_position_mask=None, mask_type=None, exclude_aa=['C']):
+def evaluate_perplexity(seq, prob_model, decode_order, structure=None, fixed_position_mask=None, mask_type=None, exclude_aa=[]):
     """
     Evaluate the perplexity of the sequence under the model. If fixed positions are provided, they
     are excluded from the perplexity calculation.

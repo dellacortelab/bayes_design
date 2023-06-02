@@ -375,6 +375,7 @@ python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order 
 Fix the active site (small), beam search decode from scratch
 ```
 python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order proximity --bayes_balance_factor .002 --decode_algorithm beam_medium --n_beams 512 --from_scratch --fixed_positions  1 9 10 10 13 13 51 51 59 59 61 61 63 63 100 102 104 104
+python3 design.py --model_name protein_mpnn --protein_id nanoluc --decode_order proximity --decode_algorithm beam --n_beams 512 --fixed_positions  1 9 10 10 13 13 51 51 59 59 61 61 63 63 100 102 104 104
 ```
 Fix the active site (small) and the engineered residues, greedy decode redesign
 ```
@@ -383,6 +384,7 @@ python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order 
 Fix the active site (small) and the engineered residues, beam search decode from scratch
 ```
 python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order proximity --bayes_balance_factor .002 --decode_algorithm beam_medium --n_beams 512 --from_scratch --fixed_positions  1 9 10 10 13 13 51 51 59 59 61 61 63 63 100 102 104 104 106 106 112 112 114 114 121 125 127 127 132 132 134 137 144 144 146 146 148 148 156 156 158 158 160 160 14 14 21 21 28 28 37 37 43 43 53 54 64 64 78 78 82 82 85 85 100 100 125 125 134 134 148 148 176 176
+python3 design.py --model_name protein_mpnn --protein_id nanoluc --decode_order proximity --decode_algorithm beam --n_beams 512 --fixed_positions  1 9 10 10 13 13 51 51 59 59 61 61 63 63 100 102 104 104 106 106 112 112 114 114 121 125 127 127 132 132 134 137 144 144 146 146 148 148 156 156 158 158 160 160 14 14 21 21 28 28 37 37 43 43 53 54 64 64 78 78 82 82 85 85 100 100 125 125 134 134 148 148 176 176
 ```
 Fix the active site (large), greedy decode redesign
 ```
@@ -391,6 +393,7 @@ python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order 
 Fix the active site (large), beam search decode from scratch
 ```
 python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order proximity --bayes_balance_factor .002 --decode_algorithm beam_medium --n_beams 512 --from_scratch --fixed_positions 1 9 8 14 17 17 49 51 57 64 98 108 110 116 120 127 132 139 142 150 156 158 160 162
+python3 design.py --model_name protein_mpnn --protein_id nanoluc --decode_order proximity --decode_algorithm beam --n_beams 512 --fixed_positions 1 9 8 14 17 17 49 51 57 64 98 108 110 116 120 127 132 139 142 150 156 158 160 162
 ```
 Fix the active site (large) and the engineered residues, greedy decode redesign
 ```
@@ -399,6 +402,7 @@ python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order 
 Fix the active site (large), and the engineered residues, beam search decode from scratch
 ```
 python3 design.py --model_name bayes_design --protein_id nanoluc --decode_order proximity --bayes_balance_factor .002 --decode_algorithm beam_medium --n_beams 512 --from_scratch --fixed_positions 1 9 8 14 17 17 49 51 57 64 98 108 110 116 120 127 132 139 142 150 156 158 160 162 14 14 21 21 28 28 37 37 43 43 53 54 64 64 78 78 82 82 85 85 100 100 125 125 134 134 148 148 176 176 
+python3 design.py --model_name protein_mpnn --protein_id nanoluc --decode_order proximity --decode_algorithm beam --n_beams 512 --fixed_positions 1 9 8 14 17 17 49 51 57 64 98 108 110 116 120 127 132 139 142 150 156 158 160 162 14 14 21 21 28 28 37 37 43 43 53 54 64 64 78 78 82 82 85 85 100 100 125 125 134 134 148 148 176 176 
 ```
 
 python3 experiment.py compare_seq_metric --model_name bayes_design --protein_id nanoluc --decode_order proximity --bayes_balance_factor .002 --metric log_prob --sequences MWSHPQFEKVFTLEDFVGDWRQTAGYNLDQVLEQGGVSSLFQNLGVSVTPIQRIVLSGENGLKIDIHVIIPYEGLSGDQMGQIEKIFKVVYPVDDHHFKVILHYGTLVIDGVTPNMIDYFGRPYEGIAVFDGKKITVTGTLWNGNKIIDERLINPDGSLLFRVTINGVTGWRLCERILA MWSHPQFEKVFTLEDFVGDWRQTAGYNMDQVLEQGGASSLFQKLGVSVTPIQRIVLSGENGLKVDIHVIIPYEGLSGCQMGLIEKIFKVVYPVDDHHFKVILHYGTLVIDGVTPNMIDYFGRPYTGIAVFDGKKITVTGTLWNGNKIVDERLINPDGSLLFRVTINGVTGWRLCERILA --fixed_positions 1 9 10 13 15 20 22 27 29 36 38 42 44 53 55 63 65 77 79 81 83 84 86 99 101 124 126 133 135 147 149 175 177 179
@@ -418,6 +422,16 @@ python3 experiment.py compare_seq_metric --model_name bayes_design --protein_id 
 python3 experiment.py compare_seq_metric --model_name bayes_design --protein_id nanoluc --decode_order proximity --bayes_balance_factor .002 --metric log_prob --sequences MWSHPQFEKVFTLEDFVGDWRQTAGYNLDQVLEQGGVSSLFQNLGVSVTPIQRIVLSGENGLKIDIHVIIPYEGLSGDQMGQIEKIFKVVYPVDDHHFKVILHYGTLVIDGVTPNMIDYFGRPYEGIAVFDGKKITVTGTLWNGNKIIDERLINPDGSLLFRVTINGVTGWRLCERILA MWSHPQFEKVFTLEDFVGDWRMVKQWNLPAVLKAMGVPQFMINLFCQTTPILRITLSGENGLKIDIEMIIPKKGLTCDQMNQIKKIFKHVEDVDDNNFKVILHYGTLVIDGVTPNMKDWFGRPYEGICKFDGKKITVTGTLWNGNKIIDEFEILPDGSLLFRVTVNGVEGWMIYERVEP --fixed_positions 1 9 8 14 17 17 49 51 57 64 98 108 110 116 120 127 132 139 142 150 156 158 160 162 14 14 21 21 28 28 37 37 43 43 53 54 64 64 78 78 82 82 85 85 100 100 125 125 134 134 148 148 176 176
 
 python3 experiment.py compare_seq_metric --model_name bayes_design --protein_id nanoluc --decode_order proximity --bayes_balance_factor .002 --metric log_prob --from_scratch --sequences MWSHPQFEKVFTLEDFVGDWRQTAGYNLDQVLEQGGVSSLFQNLGVSVTPIQRIVLSGENGLKIDIHVIIPYEGLSGDQMGQIEKIFKVVYPVDDHHFKVILHYGTLVIDGVTPNMIDYFGRPYEGIAVFDGKKITVTGTLWNGNKIIDERLINPDGSLLFRVTINGVTGWRLCERILA MWSHPQFEKVFTLEDFVGDWREVDRWNLADVLKAMGVPQFLINLYMSCTPIWRITKSGENGLKIDVEMIIPKQGLTEDQLQQIKKIFQHVEDVDDNHFKVILHYGTLVIDGVTPNMKDWFGRPYEGICKFDGKKITVTGTLWNGNKIIDEFEILPDGSLLFRTTVNGVTGYRILERVEP --fixed_positions 1 9 8 14 17 17 49 51 57 64 98 108 110 116 120 127 132 139 142 150 156 158 160 162 14 14 21 21 28 28 37 37 43 43 53 54 64 64 78 78 82 82 85 85 100 100 125 125 134 134 148 148 176 176
+
+######################################################################
+
+python3 experiment.py compare_seq_metric --model_name protein_mpnn --protein_id nanoluc --decode_order proximity --metric log_prob --sequences MWSHPQFEKVFTLEDFVGDWRQTAGYNLDQVLEQGGVSSLFQNLGVSVTPIQRIVLSGENGLKIDIHVIIPYEGLSGDQMGQIEKIFKVVYPVDDHHFKVILHYGTLVIDGVTPNMIDYFGRPYEGIAVFDGKKITVTGTLWNGNKIIDERLINPDGSLLFRVTINGVTGWRLCERILA MWSHPQFEKVLTLDDFVGKWEEVEKKNMAEVLKEMGLPEFLIELYLKTKPILVIEKSGENGLKVTVELIIPKEGLTEEQIKEIEKIFKKIEKVDENNFKVILDYGTLIVNGKSENMKDF$NKPFTGNATFDGKTLTVTGTLSNGKKVTITFTILPDGSLKLTIEVNGVKGEMILKKIEE --fixed_positions 1 9 10 10 13 13 51 51 59 59 61 61 63 63 100 102 104 104 106 106 112 112 114 114 121 125 127 127 132 132 134 137 144 144 146 146 148 148 156 156 158 158 160 160
+
+python3 experiment.py compare_seq_metric --model_name protein_mpnn --protein_id nanoluc --decode_order proximity --metric log_prob --sequences MWSHPQFEKVFTLEDFVGDWRQTAGYNLDQVLEQGGVSSLFQNLGVSVTPIQRIVLSGENGLKIDIHVIIPYEGLSGDQMGQIEKIFKVVYPVDDHHFKVILHYGTLVIDGVTPNMIDYFGRPYEGIAVFDGKKITVTGTLWNGNKIIDERLINPDGSLLFRVTINGVTGWRLCERILA MWSHPQFEKVLTLEDFVGDWREVKKENLAEVLKEMGVPEFFINLFLNTKPILRIEKAGENGLKITIELIIPKKGLTKDQLEQIKKIFKKVEEIDENNFKVILDYGTLIINGVSPNMKDFLGRPYEGIATFDGKKITVTGTLPDGRKVIITFEILEDGSLLLTVEVNGVKGSMILERVEK --fixed_positions 1 9 10 10 13 13 51 51 59 59 61 61 63 63 100 102 104 104 106 106 112 112 114 114 121 125 127 127 132 132 134 137 144 144 146 146 148 148 156 156 158 158 160 160 14 14 21 21 28 28 37 37 43 43 53 54 64 64 78 78 82 82 85 85 100 100 125 125 134 134 148 148 176 176
+
+python3 experiment.py compare_seq_metric --model_name protein_mpnn --protein_id nanoluc --decode_order proximity --metric log_prob --sequences MWSHPQFEKVFTLEDFVGDWRQTAGYNLDQVLEQGGVSSLFQNLGVSVTPIQRIVLSGENGLKIDIHVIIPYEGLSGDQMGQIEKIFKVVYPVDDHHFKVILHYGTLVIDGVTPNMIDYFGRPYEGIAVFDGKKITVTGTLWNGNKIIDERLINPDGSLLFRVTINGVTGWRLCERILA MWSHPQFEKVFTLEDFVGKWKKVSSKNIKEVLKEMGAPEFLIELFEKTTPILNITKSGENGLKIDIELIIPKEGLTEEQIKEIEKIFKKIEKVDENNFKVILHYGTLVIDGVTPNMKDFFGRPYEGIAKFDGKKITVTGTLWNGNKIIDEYEILEDGSLLFRVTVNGVKGEMILEKIEE --fixed_positions 1 9 8 14 17 17 49 51 57 64 98 108 110 116 120 127 132 139 142 150 156 158 160 162
+
+python3 experiment.py compare_seq_metric --model_name protein_mpnn --protein_id nanoluc --decode_order proximity --metric log_prob --sequences MWSHPQFEKVFTLEDFVGDWRQTAGYNLDQVLEQGGVSSLFQNLGVSVTPIQRIVLSGENGLKIDIHVIIPYEGLSGDQMGQIEKIFKVVYPVDDHHFKVILHYGTLVIDGVTPNMIDYFGRPYEGIAVFDGKKITVTGTLWNGNKIIDERLINPDGSLLFRVTINGVTGWRLCERILA MWSHPQFEKVFTLEDFVGDWREVKRENLAEVLKAMGVPEFLINLYLKTTPILRIEKSGENGLKIDIELIIPKEGLTEDQLEQIKKIFGKLEEVDENNFKVILHYGTLVIDGVTPNMKDFFGRPYEGIAKFDGKKITVTGTLWNGNKIIDEFEILEDGSLLFRVTVNGVTGSRILERVEK --fixed_positions 1 9 8 14 17 17 49 51 57 64 98 108 110 116 120 127 132 139 142 150 156 158 160 162 14 14 21 21 28 28 37 37 43 43 53 54 64 64 78 78 82 82 85 85 100 100 125 125 134 134 148 148 176 176
 
 # Moody lab design
 
