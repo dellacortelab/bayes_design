@@ -119,9 +119,10 @@ def parse_PDB_biounits(x, atoms=['N','CA','C'], chain=None):
           xyz[resn][resa][atom] = np.array([x,y,z])
 
   # convert to numpy arrays, fill in missing values
-  seq_,xyz_ = [],[]
+  seq_, xyz_, resns = [], [], []
   try:
       for resn in range(min_resn,max_resn+1):
+        resns.append(resn + 1)
         if resn in seq:
           for k in sorted(seq[resn]): seq_.append(aa_3_N.get(seq[resn][k],20))
         else: seq_.append(20)
@@ -132,9 +133,9 @@ def parse_PDB_biounits(x, atoms=['N','CA','C'], chain=None):
               else: xyz_.append(np.full(3,np.nan))
         else:
           for atom in atoms: xyz_.append(np.full(3,np.nan))
-      return np.array(xyz_).reshape(-1,len(atoms),3), N_to_AA(np.array(seq_))
+      return np.array(xyz_).reshape(-1,len(atoms),3), N_to_AA(np.array(seq_)), resns
   except TypeError:
-      return 'no_chain', 'no_chain'
+      return 'no_chain', 'no_chain', 'no_chain'
 
 def parse_PDB(path_to_pdb, input_chain_list=None, ca_only=False):
     c=0
@@ -158,12 +159,14 @@ def parse_PDB(path_to_pdb, input_chain_list=None, ca_only=False):
         concat_O = []
         concat_mask = []
         coords_dict = {}
+        concat_resns = []
         for letter in chain_alphabet:
             if ca_only:
                 sidechain_atoms = ['CA']
             else:
                 sidechain_atoms = ['N', 'CA', 'C', 'O']
-            xyz, seq = parse_PDB_biounits(biounit, atoms=sidechain_atoms, chain=letter)
+            xyz, seq, resns = parse_PDB_biounits(biounit, atoms=sidechain_atoms, chain=letter)
+            concat_resns += resns
             if type(xyz) != str:
                 concat_seq += seq[0]
                 my_dict['seq_chain_'+letter]=seq[0]
@@ -181,6 +184,7 @@ def parse_PDB(path_to_pdb, input_chain_list=None, ca_only=False):
         my_dict['name']=biounit[(fi+1):-4]
         my_dict['num_of_chains'] = s
         my_dict['seq'] = concat_seq
+        my_dict['res_ids'] = concat_resns
         if s <= len(chain_alphabet):
             pdb_dict_list.append(my_dict)
             c+=1
