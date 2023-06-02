@@ -291,7 +291,7 @@ def beam_decode(prob_model, struct, seq, decode_order, fixed_position_mask, excl
         # Chunk up predictions so they fit on one GPU
         probs_list = []
         for i in range(0, len(seqs), n_concurrent_seqs):
-            probs = prob_model.forward(seq=seqs[i:i + n_concurrent_seqs], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([decode_idx]).expand(len(seqs[i:i + n_concurrent_seqs])), exclude_aa=exclude_aa, mask_type=mask_type)
+            probs = prob_model.forward(seq=seqs[i:i + n_concurrent_seqs], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([decode_idx]).expand(len(seqs[i:i + n_concurrent_seqs])), mask_type=mask_type)
             probs_list.append(probs)
         top_candidate_probs = torch.concat(probs_list, dim=0)
         for aa in exclude_aa:
