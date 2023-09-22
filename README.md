@@ -48,4 +48,16 @@ On a V100 GPU, the greedy algorithm predicts ~10 residues/s and beam search with
 	eprint = {https://www.biorxiv.org/content/early/2022/12/30/2022.12.28.521825.full.pdf},
 	journal = {bioRxiv}
 }
+@Article{Stern2023,
+author={Stern, Jacob A. and Free, Tyler J. and Stern, Kimberlee L. and Gardiner, Spencer and Dalley, Nicholas A. and Bundy, Bradley C. and Price, Joshua L. and Wingate, David and Della Corte, Dennis},
+title={A probabilistic view of protein stability, conformational specificity, and design},
+journal={Scientific Reports},
+year={2023},
+volume={13},
+number={1},
+pages={15493},
+issn={2045-2322},
+doi={10.1038/s41598-023-42032-1},
+url={https://doi.org/10.1038/s41598-023-42032-1}
+}
 ```
