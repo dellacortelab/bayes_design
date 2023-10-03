@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.2.1-runtime-ubuntu20.04
+FROM nvidia/cuda:11.2.2-runtime-ubuntu20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -35,13 +35,14 @@ RUN pip3 install --upgrade pip
 
 RUN pip3 install torch --extra-index-url https://download.pytorch.org/whl/cu116
 
+RUN ls /tmp/
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install -r /tmp/requirements.txt
 
 
 # Install hhblits
 RUN rm /etc/apt/sources.list.d/cuda.list
-RUN rm /etc/apt/sources.list.d/nvidia-ml.list
+RUN if [ -e /etc/apt/sources.list.d/nvidia-ml.list ]; then rm /etc/apt/sources.list.d/nvidia-ml.list; fi
 RUN apt-get update && apt-get install --assume-yes --no-install-recommends --quiet cmake
 RUN cd $HOME && git clone https://github.com/soedinglab/hh-suite.git
 RUN cd $HOME/hh-suite && ls 
