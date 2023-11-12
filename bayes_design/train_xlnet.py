@@ -1,3 +1,9 @@
+# NOT CURRENTLY USED - TRYING TO GET THIS WORKING WITH THE PROTEINMPNN TRAINING SCRIPT
+
+
+
+
+
 import argparse
 import os.path
 #!/usr/bin/env python

@@ -30,4 +30,4 @@ args = argparser.parse_args()
 
 
 if __name__ == "__main__":
-    run_training(args)
+    run_training(args, model_name='xlnet')
