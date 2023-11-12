@@ -70,6 +70,7 @@ def example_design(args):
         with open('designed_seqs.pkl', 'wb') as f:
             pkl.dump(designed_seqs, f)
 
+    os.makedirs(args.results_dir, exist_ok=True)
     with open(os.path.join(args.results_dir, f'{args.model_name}_{args.protein_id}_sequences.txt'), 'w') as f:
         for seq in designed_seqs:
             f.write(seq + '\n')
