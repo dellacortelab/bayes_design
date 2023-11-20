@@ -24,6 +24,7 @@ parser.add_argument('--temperature', help='The temperature to use for sampling',
 parser.add_argument('--n_designs', help='The number of designs to generate', default=1, type=int)
 parser.add_argument('--seed', help='The random seed to use', default=0, type=int)
 parser.add_argument('--results_dir', help='The directory to save results to', default='./results')
+parser.add_argument('--exclude_aa', nargs='+', default=[])
 
 subparsers = parser.add_subparsers(help="Whether to run an experiment instead of using the base design functionality")
 experiment_parser = subparsers.add_parser('experiment')
@@ -61,14 +62,13 @@ def example_design(args):
     np.random.seed(args.seed)
     random.seed(args.seed)
 
-    designed_seqs = []
-    for i in range(args.n_designs):
-        designed_seq = decode_algorithm_dict[args.decode_algorithm](prob_model=prob_model, struct=struct, seq=seq, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=from_scratch, temperature=args.temperature, n_beams=args.n_beams)
-        designed_seqs.append(designed_seq)
-
-        # save designed sequences
-        with open('designed_seqs.pkl', 'wb') as f:
-            pkl.dump(designed_seqs, f)
+    if args.decode_algorithm in ['max_prob_decode', 'combinations']:
+        designed_seqs = decode_algorithm_dict[args.decode_algorithm](prob_model=prob_model, struct=struct, seq=seq, unmasked_seq=orig_seq, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=from_scratch, temperature=args.temperature, n_beams=args.n_beams, exclude_aa=args.exclude_aa)
+    else:
+        designed_seqs = []
+        for i in range(args.n_designs):
+            designed_seq = decode_algorithm_dict[args.decode_algorithm](prob_model=prob_model, struct=struct, seq=seq, unmasked_seq=orig_seq, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=from_scratch, temperature=args.temperature, n_beams=args.n_beams, exclude_aa=args.exclude_aa)
+            designed_seqs.append(designed_seq)
 
     with open(os.path.join(args.results_dir, f'{args.model_name}_{args.protein_id}_sequences.txt'), 'w') as f:
         for seq in designed_seqs:
