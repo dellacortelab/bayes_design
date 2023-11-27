@@ -2,9 +2,17 @@ import re
 import torch
 from torch import nn
 import numpy as np
+import os
+import subprocess
 import torch
 from transformers import XLNetTokenizer, XLNetLMHeadModel
 from .protein_mpnn.protein_mpnn_utils import ProteinMPNN
+import pickle as pkl
+
+from pathlib import Path
+from tr_rosetta_pytorch import trRosettaNetwork
+from tr_rosetta_pytorch.utils import preprocess
+from tr_rosetta_pytorch.cli import DEFAULT_MODEL_PATH
 
 from .utils import AMINO_ACID_ORDER
 
@@ -148,13 +156,14 @@ class XLNetWrapper(nn.Module):
             
         with torch.inference_mode():
             out = self.model(input_ids.to(self.device), perm_mask=perm_mask.to(self.device), target_mapping=target_mapping.to(self.device))
-            # logits has shape [batch_size, 1, config.vocab_size]
+            # logits has shape [batch_size, 1, config.vocab_size] (1 is num_tokens_to_predict)
             index_corrected_logits = out.logits[:, 0, self.canonical_idx_to_xlnet_idx]
             # Ignore the last entry, corresponding to 'X'
             index_corrected_logits = index_corrected_logits[:, :-1]
             # Get temperature-adjusted probabilities
             probs = torch.nn.functional.softmax(index_corrected_logits / temperature, dim=-1)
-            
+            probs = probs / probs.sum(dim=-1, keepdim=True)
+
         return probs
         
 class ProteinMPNNWrapper(nn.Module):
@@ -215,7 +224,10 @@ class ProteinMPNNWrapper(nn.Module):
             
             struct = struct.expand(N, *struct.shape).to(self.device)
             # Default values
-            mask = torch.ones(N, L).float().to(self.device)
+            # `mask` masks positions that are missing structural information
+            mask = torch.isfinite(torch.sum(struct,(2,3))).to(torch.float32)
+            isnan = torch.isnan(struct)
+            struct[isnan] = 0.
             chain_M = torch.ones(N, L).float().to(self.device)
             chain_encoding_all = torch.ones(N, L).float().to(self.device)
             residue_idx = torch.arange(L).expand(N, L).to(self.device)
@@ -224,9 +236,12 @@ class ProteinMPNNWrapper(nn.Module):
             # Get temperature-adjusted probabilities
             probs = torch.nn.functional.softmax(logits / temperature, dim=-1)
             # N x L x 20
-            # Ignore the last entry, corresponding to 'X', and normalize
-            probs = probs[:, :, :-1] / probs[:, :, :-1].sum(dim=-1).unsqueeze(-1)
+            # Ignore last entry, corresponding to 'X'
+            probs = probs[:, :, :-1]
+            probs = probs / probs.sum(dim=-1, keepdim=True)
             
+        # Note that unlike XLNet, ProteinMPNN gives probabilities for all residues, not just the one to decode. 
+        # So here we extract the probabilities for the residue to decode.
         return probs[range(len(token_to_decode)), token_to_decode]
         # N x 20
 
@@ -260,4 +275,117 @@ class BayesDesign(nn.Module):
         return p_struct_seq
 
 
-model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign}
+class TrRosettaWrapper():
+    def __init__(self, data_location='./data/msa', database='./data/uniref30/UniRef30_2022_02', device=None):
+
+        if device is not None:
+            self.device = device
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda:0")
+        else:
+            self.device = torch.device('cpu')
+        
+        model_files = [*Path(DEFAULT_MODEL_PATH).glob('*.pt')]
+        self.models = []
+        for model_file in model_files[:1]:
+            trRosetta = trRosettaNetwork(
+                filters = 64,
+                kernel = 3,
+                num_layers = 61
+            )
+            trRosetta = trRosetta.to(self.device)
+            trRosetta.load_state_dict(torch.load(model_file, map_location=self.device))
+            trRosetta.eval()
+            self.models.append(trRosetta)
+
+        self.data_location = data_location
+        os.makedirs(self.data_location, exist_ok=True)
+
+        self.database = database
+
+    def __call__(self, seq, seq_id=""):
+        """Pass a sequence through the trRosetta model and return the distogram
+        Args:
+            seq (str): a space-separated string representing the amino acid sequence
+        Returns:
+            distance ((L x L x 37) torch.Tensor): a distogram representing distance bin probabilities
+        """
+        seq_path = os.path.join(self.data_location, f'{seq_id}_{seq}.txt')
+        seq_msa_path = os.path.join(self.data_location, f'msa_{seq_id}_{seq}.txt')
+        # Make a fasta file with the sequence
+        with open(seq_path, 'w') as f:
+            f.write('>\n' + ''.join(seq.split()))
+        # Get an MSA for the sequence
+        if not os.path.exists(seq_msa_path):
+            out = subprocess.run(['/root/hh-suite/bin/hhblits', '-v', '0', '-i', f'{seq_path}', '-oa3m', f'{seq_msa_path}', '-d', f'{self.database}'])
+        x = preprocess(seq_msa_path).to(self.device)
+        outputs = []
+        with torch.no_grad():
+            for model in self.models:
+                output = model(x)
+                outputs.append(output)
+            averaged_outputs = [torch.stack(model_output).mean(dim=0).cpu().numpy().squeeze(0).transpose(1,2,0) for model_output in zip(*outputs)]
+            # prob_theta, prob_phi, prob_distance, prob_omega
+            output_dict = dict(zip(['theta', 'phi', 'dist', 'omega'], averaged_outputs))
+            distance = output_dict['dist']
+            distance = distance.squeeze()
+
+        return distance
+
+def test_xlnet_wrapper():
+    import random
+
+    seq, struct = get_protein()
+    seq = seq[:10]
+    given_characters_up_to = 5
+    seq = ''.join([char if i < given_characters_up_to else '-' for i, char in enumerate(seq)])
+
+    xlnet = XLNetWrapper()
+
+    decoding_order = np.arange(len(seq)).tolist()
+    random.shuffle(decoding_order)
+    out_probs = xlnet(seq, decoding_order=decoding_order, token_to_decode=given_characters_up_to)
+
+def test_protein_mpnn_wrapper():
+    seq, struct = get_protein()
+    given_characters_up_to = 20
+    seq = ''.join([char if i < given_characters_up_to else '-' for i, char in enumerate(seq)])
+
+    mpnn = ProteinMPNNWrapper()
+    decoding_order = np.arange(len(seq)).tolist()
+    out_probs = mpnn(seq=seq, struct=struct, decoding_order=decoding_order, token_to_decode=given_characters_up_to)
+
+
+
+class TransformerXLU100Wrapper(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self):
+        pass
+
+class ProGenWrapper(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self):
+        pass
+
+class ESMIF1Wrapper(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self):
+        pass
+
+class PSSM():
+    def __init__(self, pssm_path):
+        # load pssm from pickle
+        with open(pssm_path, 'rb') as f:
+            self.pssm = pkl.load(f)
+
+    def __call__(self, seq, struct, decode_order, token_to_decode, mask_type):
+        return self.pssm[token_to_decode, :]
+
+
+model_dict = {'xlnet':XLNetWrapper, 'protein_mpnn':ProteinMPNNWrapper, 'bayes_design':BayesDesign, 'pssm':PSSM, 'trRosetta':TrRosettaWrapper}
