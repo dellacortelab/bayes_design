@@ -134,10 +134,11 @@ def main(args, model_name):
                 
                 if args.mixed_precision:
                     with torch.cuda.amp.autocast():
-                        log_probs = model(X, S, mask, chain_M, residue_idx, chain_encoding_all)
-                        _, loss_av_smoothed = loss_smoothed(S, log_probs, mask_for_loss)
+                        log_probs = model(X, S, mask, chain_M, residue_idx, chain_encoding_all) # Dim: (batch_size, max_length, 21)
+
+                        _, loss = loss_smoothed(S, log_probs, mask_for_loss)
            
-                    scaler.scale(loss_av_smoothed).backward()
+                    scaler.scale(loss).backward()
                      
                     if args.gradient_norm > 0.0:
                         total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_norm)
@@ -146,8 +147,9 @@ def main(args, model_name):
                     scaler.update()
                 else:
                     log_probs = model(X, S, mask, chain_M, residue_idx, chain_encoding_all)
-                    _, loss_av_smoothed = loss_smoothed(S, log_probs, mask_for_loss)
-                    loss_av_smoothed.backward()
+
+                    _, loss= loss_smoothed(S, log_probs, mask_for_loss)
+                    loss.backward()
 
                     if args.gradient_norm > 0.0:
                         total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_norm)

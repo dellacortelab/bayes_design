@@ -132,9 +132,9 @@ def loss_nll(S, log_probs, mask):
     return loss, loss_av, true_false
 
 
-def loss_smoothed(S, log_probs, mask, weight=0.1):
+def loss_smoothed(S, log_probs, mask, vocab_size=21, weight=0.1):
     """ Negative log probabilities """
-    S_onehot = torch.nn.functional.one_hot(S, 21).float()
+    S_onehot = torch.nn.functional.one_hot(S, vocab_size).float()
 
     # Label smoothing
     S_onehot = S_onehot + weight / float(S_onehot.size(-1))
@@ -282,46 +282,95 @@ class XLNetWrapperForProteinMPNNTraining(nn.Module):
         xlnet_vocab_dict = self.tokenizer.get_vocab()
         xlnet_vocab_dict['▁X'] = xlnet_vocab_dict['X']
         self.canonical_idx_to_xlnet_idx = torch.tensor([xlnet_vocab_dict['▁' + aa] for aa in AMINO_ACID_ORDER])
+        self.xlnet_idx_to_canonical_idx = torch.tensor([AMINO_ACID_ORDER.index(aa.replace('_', '')) for aa in self.tokenizer.convert_ids_to_tokens(range(len(xlnet_vocab_dict))) if (aa.replace('_', '') in AMINO_ACID_ORDER) else AMINO_ACID_ORDER.index('X')])
 
-    def forward(self, X, S, mask, chain_M, residue_idx=None, chain_encoding_all=None):
+    def mask_tokens(self, inputs, valid_residue_mask):
+        """
+        Masking function for XLNet. This is a modified version of the function in the original XLNet implementation
+        Args:
+            inputs (torch.Tensor): Input sequence of token indices
+            valid_residue_mask (torch.Tensor): Mask indicating which residues are present in the sequence. 1 if present, 0 if missing.
+            Note: chain_M is not used because it just determines what is supervised and is only used in the training loop
+        """
+        import torch
+
+        # Creating the mask and target_mapping tensors
+
+        # Mask all tokens to be analogous to the ProteinMPNN model
+        masked_indices = torch.full(inputs.shape, 1, dtype=torch.bool)
+        target_mapping = torch.zeros((inputs.size(0), inputs.size(1), inputs.size(1)), dtype=torch.float32)
+
+        for i in range(inputs.size(0)):
+            # Since we're replacing non-masked tokens with -100 in the inputs tensor instead of skipping them altogether,
+            # the i-th predict corresponds to the i-th token.
+            target_mapping[i] = torch.eye(inputs.size(1))
+
+        special_tokens_mask = torch.tensor(
+            [self.tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in inputs.tolist()],
+            dtype=torch.bool,
+        )
+        masked_indices.masked_fill_(special_tokens_mask, value=0.0)
+        if self.tokenizer._pad_token is not None:
+            padding_mask = inputs.eq(self.tokenizer.pad_token_id)
+            masked_indices.masked_fill_(padding_mask, value=0.0)
+
+        # Mask indicating non-functional tokens, where functional tokens are [SEP], [CLS], padding, etc.
+        non_func_mask = ~(padding_mask | special_tokens_mask | ~valid_residue_mask)
+
+        # I think that replacing these tokens in the input should not matter because the perm mask prevents them from being seen
+        inputs[masked_indices] = self.tokenizer.mask_token_id
+
+        perm_mask = torch.zeros((inputs.size(0), inputs.size(1), inputs.size(1)), dtype=torch.float32)
+
+        for i in range(inputs.size(0)):
+            # Generate permutation indices i.e. sample a random factorisation order for the sequence. This will
+            # determine which tokens a given token can attend to (encoded in `perm_mask`).
+            # Note: Length of token sequence being permuted has to be less than or equal to reused sequence length
+            # (see documentation for `mems`), otherwise information may leak through due to reuse. In this implementation,
+            # we assume that reused length is half of sequence length and permutation length is equal to reused length.
+            # This requires that the sequence length be even.
+
+            # Create a linear factorisation order
+            perm_index = torch.arange(inputs.size(1))
+            # Split this into two halves, assuming that half the sequence is reused each time
+            perm_index = perm_index.reshape((-1, inputs.size(1) // 2)).transpose(0, 1)
+            # Permute the two halves such that they do not cross over
+            perm_index = perm_index[torch.randperm(inputs.size(1) // 2)]
+            # Flatten this out into the desired permuted factorisation order
+            perm_index = torch.flatten(perm_index.transpose(0, 1))
+            # Set the permutation indices of non-masked (non-functional) tokens to the
+            # smallest index (-1) so that:
+            # (1) They can be seen by all other positions
+            # (2) They cannot see masked positions, so there won't be information leak
+            perm_index.masked_fill_(~masked_indices[i] & non_func_mask[i], -1)
+            # The logic for whether the i-th token can attend on the j-th token based on the factorisation order:
+            # 0 (can attend): If perm_index[i] > perm_index[j] or j is neither masked nor a functional token
+            # 1 (cannot attend): If perm_index[i] <= perm_index[j] and j is either masked or a functional token
+            perm_mask[i] = (
+                perm_index.reshape((inputs.size(1), 1)) <= perm_index.reshape((1, inputs.size(1)))
+            ) & masked_indices[i]
+
+        return inputs.long(), perm_mask, target_mapping
+
+    def forward(self, X, S, valid_residue_mask, chain_M, residue_idx=None, chain_encoding_all=None):
         """Graph-conditioned sequence model
         Args:
             mask ((batch_size, max_seq_len) torch.Tensor): Mask indicating residues that are missing in the sequence.
-                Note that max_seq_len is the sequence length of all chains in the batch concatenated together.
+                1 if present, 0 if missing.
             chain_M ((batch_size, max_seq_len) torch.Tensor): Mask of shape indicating which residues are masked 
             due to being in different chains of a homo-oligomer. 
             In order to replicate ProteinMPNN, we would need to have fully connected edges
         """
-        device=X.device
-
-        # Concatenate sequence embeddings for autoregressive decoder
-        h_S = self.W_s(S)
-
-        chain_M = chain_M*mask #update chain_M to include missing regions
-        # Multiplying by chain_M and sorting places masked residues at the end of the sequence
-        decoding_order = torch.argsort((chain_M+0.0001)*(torch.abs(torch.randn(chain_M.shape, device=device))))
-        
-        mask_size = E_idx.shape[1]
-        # Get mask_size from different object
-        mask_size = mask.shape[1]
-        permutation_matrix_reverse = torch.nn.functional.one_hot(decoding_order, num_classes=mask_size).float()
-        # order_mask_backward prevents the decoder from attending to future positions
-        order_mask_backward = torch.einsum('ij, biq, bjp->bqp',(1-torch.triu(torch.ones(mask_size,mask_size, device=device))), permutation_matrix_reverse, permutation_matrix_reverse)
-
-        # mask attend gets the subset of the order mask that pertains to the nodes that the current node is connected to based on the edges
-        mask_1D = mask.view([mask.size(0), mask.size(1), 1, 1])
-        mask_bw = mask_1D * mask_attend
-        mask_fw = mask_1D * (1. - mask_attend)
-
-        h_EXV_encoder_fw = mask_fw * h_EXV_encoder
-        # There are three decoder recycles
-        for layer in self.decoder_layers:
-            h_ESV = cat_neighbors_nodes(h_V, h_S, E_idx)
-            h_ESV = mask_bw * h_ESV + h_EXV_encoder_fw
-            h_V = torch.utils.checkpoint.checkpoint(layer, h_V, h_ESV, mask)
-
-        logits = self.W_out(h_V)
-        log_probs = F.log_softmax(logits, dim=-1)
+        # Convert input ids from ProteinMPNN input ids to corresponding XLNet input ids
+        input_ids = S.cpu().apply(lambda x: self.canonical_idx_to_xlnet_idx[x]).to(S.device)
+        # perm_mask =
+        input_ids, perm_mask, target_mapping, _ = mask_tokens(input_ids, valid_residue_mask)
+        # Where does the model get the labels? It doesn't, they are extracted from the total log probs inside the train loop
+        output = self.model({'input_ids':input_ids, 'perm_mask':perm_mask, 'target_mapping':target_mapping})
+        logits = output["logits"] # dimensions: B x N x vocab_size
+        # Get subset of logits corresponding to protein_mpnn_vocab_size
+        protein_mpnn_logits = logits[self.canonical_idx_to_xlnet_idx]
+        log_probs = torch.nn.functional.softmax(protein_mpnn_logits, dim=-1)
         return log_probs
 
 
