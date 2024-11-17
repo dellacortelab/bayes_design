@@ -37,3 +37,4 @@ python3 -m bayes_design.design --model_name cs_design --protein_id 4GSB --protei
 ```
 python3 -m bayes_design.design --model_name cs_design --protein_id 4GSB --protein_id_anti 2ERK --decode_order n_to_c --decode_algorithm greedy --fixed_positions 1 168 187 358 --ball_mask
 ```
+python3 -m bayes_design.experiments.scrmsd_experiment
