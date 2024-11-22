@@ -10,12 +10,15 @@ from bayes_design.model import model_dict
 from bayes_design.utils import get_protein, align_and_crop, get_ball_mask, get_fixed_position_mask
 from bayes_design.experiments.cath import parse_cath_file
 
+from tqdm import tqdm
+
 from Bio import pairwise2
 from Bio.Seq import Seq
 from Bio.SeqUtils import seq1 as three_letter_to_one_letter
 from Bio.PDB.Polypeptide import PPBuilder
 import json
 
+from collections import defaultdict
 from torch.nn import functional as F
 
 
@@ -61,10 +64,10 @@ def detokenize_sequence(sequence):
     return "".join([detokenizer_dict[i] for i in sequence])
 
 class PDBDataset(torch.utils.data.Dataset):
-    def __init__(self, pdb_dir):
+    def __init__(self, pdb_dir, verbose=False):
         self.pdb_dir = pdb_dir
         self.pdb_paths = [os.path.join(root, file) for root, dirs, files in os.walk(pdb_dir) for file in files]
-        self.parser = PDBParser()
+        self.parser = PDBParser(QUIET=not verbose)
 
     def __len__(self):
         return len(self.pdb_paths)
@@ -157,6 +160,8 @@ def align_sequences_with_res_ids(seq1, res_ids1, seq2, res_ids2):
         aligned_seq1 ((L) list of str): The aligned sequence of seq1.
         aligned_seq2 ((L) list of str): The aligned sequence
     """
+    res_ids1 = res_ids1.tolist()
+    res_ids2 = res_ids2.tolist()
     # Align sequences
     seq1 = "".join(seq1)
     seq2 = "".join(seq2)
@@ -235,14 +240,10 @@ def compute_windowed_sequence_identity(seq1, seq2, window_size=10):
     # Ensure sequences are of the same length and convert them to tensors
     assert len(seq1_tokenized) == len(seq2_tokenized), "Sequences must be of the same length"
     
-    # Convert sequences to tensor (assuming they are lists of residue indices)
-    seq1_tensor = torch.tensor(seq1_tokenized)
-    seq2_tensor = torch.tensor(seq2_tokenized)
-    
     # Compute the binary match tensor (1 if residues match, 0 if they don't)
-    match_tensor = (seq1_tensor == seq2_tensor).float()
+    match_tensor = (seq1_tokenized == seq2_tokenized).float()
     # Set the match tensor to 0 if either residue is a gap
-    match_tensor[(seq1_tensor == tokenizer_dict["-"]) | (seq2_tensor == tokenizer_dict["-"])] = 0
+    match_tensor[(seq1_tokenized == tokenizer_dict["-"]) | (seq2_tokenized == tokenizer_dict["-"])] = 0
     
     # Compute the cumulative sum of matches
     cumulative_sum = torch.cumsum(match_tensor, dim=0)
@@ -332,187 +333,89 @@ def calculate_rmsd(chain_residues, new_chain_residues):
     rmsd = np.sqrt(np.mean(np.sum((chain_coords - new_chain_coords_aligned) ** 2, axis=1)))
     return rmsd
 
-def find_pdb_chain_matches():
-    """For each protein in the PDB calculate the scRMSD between any chain in that protein and any chains 
-    
-    # Iterate over the PDB
-    # For each protein
-        # For each chain in that protein
-            # Iterate over the PDB
-            matches = dict()
-            # For each chain in each protein
-                # If there is chain has 98% sequence id to that chain*
-                    # Create variables identifying the beginning residue id and end residue id of the overlapping portions between the chains
-                    # Calculate the residue-wise RMSD between the two chains under a kabsch alignment
-                    # Iterate over each 10-residue linear span and calculate the average RMSD for that span.
-                    # Identify the top linear RMSD span
-                    # Create a dict with this info:
-                    matches[new_pdb_id + "_" + new_chain_id]["this_pdb_residue_ids"] = (this_pdb_beginning_residue_id, this_pdb_end_residue_id)
-                    matches[new_pdb_id + "_" + new_chain_id]["new_pdb_residue_ids"] = (beginning_residue_id, end_residue_id)
-                    matches[new_pdb_id + "_" + new_chain_id]["rmsds"] = rmsd
-                    matches[new_pdb_id + "_" + new_chain_id]["linear_rmsds"] = linear_rmsds
-                    matches[new_pdb_id + "_" + new_chain_id]["top_linear_rmsd"] = top_linear_rmsd
-    # *98% sequence identity means that one chain is a 98% sequence identity match to the other chain. It may cover 60% of the residues in the chain, but the 60% that are covered are 98% identical to the other chain. 
-    """
-    pdbl = PDBList()
-    # all_pdb_ids = pdbl.get_all_entries()
-    # pdb_dir_structure looks like
-    # pdb_dir
-    # ├── kr
-    # │   ├── pdb2krj.ent
-    # │   ├── pdb2krk.ent
-
-    # Get all fully resolved paths
-    pdb_dir = os.path.join(args.output_dir, "pdb")
-    dataset = PDBDataset(pdb_dir)
-    dataloader_1 = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=custom_collate_fn)
-    dataloader_2 = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=custom_collate_fn)
-    # Now as a list comprehension
-    error_file = os.path.join(args.output_dir, "errors.txt")
-    
-    for coords_1, seq_1, res_ids_1 in dataloader_1:
-        # TODO: Add pdb id, chain id
-        # print("Chain 1:", structure_1.id, chain_1.id)
-        # match_path = os.path.join(args.output_dir, "matches", f"{structure_1.id}_{chain_1.id}_match.json")
-        # if os.path.exists(match_path):
-        #     continue
-        # TODO: Set max length to prevent memory errors
-        matches = dict()
-        for coords_2, seq_2, res_ids_2 in dataloader_2:
-            # if structure_1.id == structure_2.id:
-            #     continue
-            # print("Chain 2:", structure_2.id, chain_2.id)
-            largest_rmsd = 0.
-            best_match = None
-            for seq_1_single, res_ids_1_single, seq_2_single, res_ids_2_single in zip(seq_1, res_ids_1, seq_2, res_ids_2):
-                aligned_res_ids1, aligned_res_ids2, aligned_seq1, aligned_seq2 = align_sequences_with_res_ids(seq_1_single, res_ids_1_single, seq_2_single, res_ids_2_single)
-                try:
-                    assert len(aligned_res_ids1) >= args.motif_length
-                except:
-                    # # append to error file
-                    # with open(error_file, "a") as f:
-                    #     f.write(f"{pdb_id_1}_{chain_1.id} {pdb_id_2}_{chain_2.id}\n")
-                    continue
-                # Apply a sliding window of size motif_length, calculate identity in that window
-                import time
-                start = time.time()
-                identity = compute_windowed_sequence_identity(aligned_seq1, aligned_seq2)
-                end = time.time()
-                print(end - start)
-                # Select 
-                start = time.time()
-                for i in range(len(aligned_seq1) - args.motif_length + 1):
-                    motif_seq1 = aligned_seq1[i:i+args.motif_length]
-                    motif_seq2 = aligned_seq2[i:i+args.motif_length]
-                    # if "-" in motif_seq1 or "-" in motif_seq2: # Skip comparing segments where there is a gap in either sequence
-                    #     continue
-                    identity = calculate_identity(motif_seq1, motif_seq2)
-                #     if identity < args.sequence_identity_threshold: # Skip if sequence identity is below threshold
-                #         continue
-
-                #     start_res1 = aligned_res_ids1[i]
-                #     end_res1 = aligned_res_ids1[i+args.motif_length-1]
-                #     start_res2 = aligned_res_ids2[i]
-                #     end_res2 = aligned_res_ids2[i+args.motif_length-1]
-                #     chain_segment_residues = [residue for residue in chain_residues if residue.id[1] >= start_res1 and residue.id[1] <= end_res1]
-                #     new_chain_segment_residues = [residue for residue in new_chain_residues if residue.id[1] >= start_res2 and residue.id[1] <= end_res2]
-                #     rmsd = calculate_rmsd(chain_segment_residues, new_chain_segment_residues)
-                #     if rmsd > largest_rmsd:
-                #         # We are looking for high sequence identity and low RMSD
-                #         largest_rmsd = rmsd
-                #         best_match = {
-                #             "matching_pdb_id": pdb_id_2,
-                #             "matching_chain_id": chain_2.id,
-                #             "identity": identity,
-                #             "overlap_residue_range_1": (start_res1, end_res1),
-                #             "overlap_residue_range_2": (start_res2, end_res2),
-                #             "rmsd": rmsd
-                #         }
-                # if best_match is not None:
-                #     matches[(pdb_id_2, chain_2.id)] = best_match
-                end = time.time()
-                print(end - start)
-                breakpoint()
-            # Store only the match with highest RMSD
-            matches = sorted(matches.items(), key=lambda x: x[1]["rmsd"])
-            top_match = matches[0]
-
-            # save matches to json
-            with open(match_path, "w") as f:
-                json.dump(top_match, f)
-
-
-
-
-def find_cath_chain_matches():
+def find_cath_chain_matches(args):
     """Find matching chains within CATH superfamilies."""
-    cath_domains = parse_cath_file(os.path.join(args.output_dir, "cath-domain-list-sample.txt"))
+    # cath_domains = parse_cath_file(os.path.join(args.output_dir, "cath-domain-list-sample.txt"))
+    cath_domains = parse_cath_file(os.path.join(args.output_dir, "cath-domain-list.txt"))
     dataset = CathDataset(os.path.join(args.output_dir, "pdb"), cath_domains)
-    matches = {}
+    matches = []
 
-    for domain in cath_domains:
-        domain_matches = []
-        superfamily_domains = dataset.get_superfamily_domains(domain)
-        
-        # try:
-        domain_structure = dataset.parser.get_structure(domain.domain_name, 
-                                                        dataset.get_domain_path(domain.domain_name))
-        domain_chain = domain_structure[0][domain.domain_name[4]]
-        domain_coords, domain_seq, domain_res_ids = dataset.extract_seq_and_res_ids(domain_chain)
-        
-        for other_domain in superfamily_domains:
-            if other_domain.domain_name == domain.domain_name:
+    already_compared = set()
+    with tqdm(total=len(cath_domains)) as pbar:
+        for domain in cath_domains:
+            pbar.update(1)
+            domain_matches = []
+            superfamily_domains = dataset.get_superfamily_domains(domain)
+
+            if len(superfamily_domains) == 0:
                 continue
-
-            # try:
-            other_structure = dataset.parser.get_structure(other_domain.domain_name,
-                                                        dataset.get_domain_path(other_domain.domain_name))
-            other_chain = other_structure[0][other_domain.domain_name[4]]
-            other_coords, other_seq, other_res_ids = dataset.extract_seq_and_res_ids(other_chain)
-
-            breakpoint()
-            print(domain_seq)
-            print(domain_res_ids)
-            print(other_seq)
-            print(other_res_ids)
-            aligned_res_ids1, aligned_res_ids2, aligned_seq1, aligned_seq2 = \
-                align_sequences_with_res_ids(domain_seq, torch.tensor(domain_res_ids),
-                                            other_seq, torch.tensor(other_res_ids))
-
-            seq_identity = compute_windowed_sequence_identity(aligned_seq1, aligned_seq2, 
-                                                            window_size=args.motif_length)
-
-            high_identity_regions = torch.where(seq_identity >= args.sequence_identity_threshold / 100)[0]
             
-            if len(high_identity_regions) > 0:
-                for i in high_identity_regions:
-                    start_res1 = aligned_res_ids1[i]
-                    end_res1 = aligned_res_ids1[i+args.motif_length-1]
-                    start_res2 = aligned_res_ids2[i]
-                    end_res2 = aligned_res_ids2[i+args.motif_length-1]
-                    # TODO: debugged up to here
-                    chain_segment_residues = [residue for residue in domain_chain if residue.id[1] >= start_res1 and residue.id[1] <= end_res1]
-                    other_chain_segment_residues = [residue for residue in other_chain if residue.id[1] >= start_res2 and residue.id[1] <= end_res2]
-                    rmsd = calculate_rmsd(chain_segment_residues, other_chain_segment_residues)
-                    # TODO: checked up to here
-                    domain_matches.append({
-                        "matching_domain_name": other_domain.domain_name,
-                        "identity": seq_identity[i].item(),
-                        "overlap_residue_range_1": (start_res1, end_res1),
-                        "overlap_residue_range_2": (start_res2, end_res2),
-                        "rmsd": rmsd
-                    })
+            # try:
+            domain_structure = dataset.parser.get_structure(domain.domain_name, 
+                                                            dataset.get_domain_path(domain.domain_name))
+            domain_chain = domain_structure[0][domain.domain_name[4]]
+            domain_coords, domain_seq, domain_res_ids = dataset.extract_seq_and_res_ids(domain_chain)
+            
+            # Compare to random sample of 20 other domains to avoid N^2 comparisons
+            for other_domain in np.random.choice(superfamily_domains, 20):
+                print(other_domain)
+                if other_domain.domain_name == domain.domain_name:
+                    continue
+                if set([domain.domain_name, other_domain.domain_name]) in already_compared:
+                    continue
+                already_compared.add((domain.domain_name, other_domain.domain_name))
+
+                try:
+                    other_structure = dataset.parser.get_structure(other_domain.domain_name,
+                                                            dataset.get_domain_path(other_domain.domain_name))
+                except FileNotFoundError:
+                    continue
+                other_chain = other_structure[0][other_domain.domain_name[4]]
+                other_coords, other_seq, other_res_ids = dataset.extract_seq_and_res_ids(other_chain)
+
+                aligned_res_ids1, aligned_res_ids2, aligned_seq1, aligned_seq2 = \
+                    align_sequences_with_res_ids(domain_seq, torch.tensor(domain_res_ids),
+                                                other_seq, torch.tensor(other_res_ids))
+
+                seq_identity = compute_windowed_sequence_identity(aligned_seq1, aligned_seq2, 
+                                                                window_size=args.motif_length)
+
+                high_identity_regions = torch.where(seq_identity >= args.sequence_identity_threshold / 100)[0]
+                
+                if len(high_identity_regions) > 0:
+                    for i in high_identity_regions:
+                        start_res1 = aligned_res_ids1[i]
+                        end_res1 = aligned_res_ids1[i+args.motif_length-1]
+                        start_res2 = aligned_res_ids2[i]
+                        end_res2 = aligned_res_ids2[i+args.motif_length-1]
+                        if None in aligned_res_ids1[i:i+args.motif_length] or None in aligned_res_ids2[i:i+args.motif_length]:
+                            # Skip if there are missing residues in the alignment, do not allow gaps
+                            continue
+                        chain_segment_residues = [residue for residue in domain_chain if residue.id[1] >= start_res1 and residue.id[1] <= end_res1]
+                        other_chain_segment_residues = [residue for residue in other_chain if residue.id[1] >= start_res2 and residue.id[1] <= end_res2]
+                        rmsd = calculate_rmsd(chain_segment_residues, other_chain_segment_residues)
+                        superfamily = [domain.class_number, domain.architecture, domain.topology, domain.homologous_superfamily]
+                        domain_matches.append({
+                            "domain_name": domain.domain_name,
+                            "matching_domain_name": other_domain.domain_name,
+                            "identity": seq_identity[i].item(),
+                            "overlap_residue_range_1": (start_res1, end_res1),
+                            "overlap_residue_range_2": (start_res2, end_res2),
+                            "rmsd": rmsd,
+                            "superfamily": superfamily
+                        })
+
+                # except Exception as e:
+                #     print(f"Error processing other domain {other_domain.domain_name}: {str(e)}")
+                #     continue
 
             # except Exception as e:
-            #     print(f"Error processing other domain {other_domain.domain_name}: {str(e)}")
+            #     print(f"Error processing domain {domain.domain_name}: {str(e)}")
             #     continue
-
-        if domain_matches:
-            matches[domain.domain_name] = domain_matches
-
-        # except Exception as e:
-        #     print(f"Error processing domain {domain.domain_name}: {str(e)}")
-        #     continue
+            if len(domain_matches) == 0:
+                continue
+            top_domain_match = sorted(domain_matches, key=lambda x: x["rmsd"])[0]
+            matches.append(top_domain_match)
 
     output_file = os.path.join(args.output_dir, "cath_matches.json")
     with open(output_file, 'w') as f:
@@ -522,29 +425,23 @@ def find_cath_chain_matches():
     
 
 def select_top_case_studies(args):
-    """Iterate over matches and identify the PDB chains corresponding to the top 100 'top_linear_rmsd' values, excluding duplicates (i.e. if there is an entry for PDB A and PDB B, do not consider PDB B compared to PDB A). Move these to a new directory"""
-    matches = []
-    for pdb_id in os.listdir(args.output_dir):
-        for chain_id in os.listdir(os.path.join(args.output_dir, pdb_id)):
-            with open(os.path.join(args.output_dir, pdb_id, chain_id, "matches.json"), "r") as f:
-                match = json.load(f)
-                matches.append((pdb_id, chain_id, match["matching_pdb_id"], match["rmsd"]))
+    """Iterate over matches and identify the PDB chains  corresponding to the top 100 'top_linear_rmsd' values, excluding duplicates (i.e. if there is an entry for PDB A and PDB B, do not consider PDB B compared to PDB A). Also, only consider each domain once - i.e. if PDB B is a match for PDB A, do not search for additional matches to PDB B. Write these out to a json in the same format as the input."""
+    with open(os.path.join(args.output_dir, "cath_matches.json"), "r") as f:
+        matches = json.load(f)
 
-    top_matches_sorted = sorted(matches, key=lambda x: x[3])
-    top_matches_set = set()
-    for i, (pdb_id, chain_id, matching_pdb_id, rmsd) in enumerate(top_matches_sorted):
-        if i >= 100:
-            break
-        # If the match or reverse match is already in the set, skip
-        if (pdb_id, chain_id, matching_pdb_id) in top_matches_set or (matching_pdb_id, chain_id, pdb_id) in top_matches_set:
-            continue
-        top_matches_set.add((pdb_id, chain_id, matching_pdb_id))
+    superfamily_top_case_studies = defaultdict(list)
+    for domain_match in matches:
+        superfamily_top_case_studies[tuple(domain_match["superfamily"])].append(domain_match)
 
-    # Save the top case studies
-    os.makedirs(os.path.join(args.output_dir, "top_case_studies", pdb_id, chain_id), exist_ok=True)
-    for pdb_id, chain_id, matching_pdb_id in top_matches_set:
-        matches_path = os.path.join(args.output_dir, "matches", f"{pdb_id}_{chain_id}_match.json")
-        os.rename(matches_path, os.path.join(args.output_dir, "top_case_studies", f"{pdb_id}_{chain_id}_match.json"))
+    top_case_studies = []
+    for superfamily, superfamily_matches in superfamily_top_case_studies.items():
+        top_superfamily_matches = sorted(superfamily_matches, key=lambda x: x["rmsd"])
+        top_case_studies.append(top_superfamily_matches[0])
+
+    top_case_studies = sorted(top_case_studies, key=lambda x: x["rmsd"])[:args.num_top_case_studies]
+    
+    return top_case_studies
+
 
 def inverse_fold_proteinmpnn(args):
     
@@ -598,12 +495,21 @@ if __name__ == "__main__":
     parser.add_argument("--sequence_identity_threshold", help="Sequence identity threshold for matching. E.g. if motif_length == 10, and sequence_identity_threshold == 90, then a match is found if >= 9/10 residues are identical.", type=int, default=90)
     parser.add_argument("--num_top_case_studies", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=10)
+    parser.add_argument("--verbose", action="store_true")
     
     args = parser.parse_args()
 
     # find_pdb_chain_matches()
-    find_cath_chain_matches()
-    select_top_case_studies()
+    find_cath_chain_matches(args)
+    top_case_studies = select_top_case_studies(args)
+
+    for top_case_study in top_case_studies[:5]:
+        print("Superfamily:", top_case_study["superfamily"])
+        print("Domain:", top_case_study["domain_name"])
+        print("Matching domain:", top_case_study["matching_domain_name"])
+        print("Identity:", top_case_study["identity"])
+        print("RMSD:", top_case_study["rmsd"])
+
     # inverse_fold_proteinmpnn()
     # inverse_fold_csdesign()
     # fold_esmfold()
