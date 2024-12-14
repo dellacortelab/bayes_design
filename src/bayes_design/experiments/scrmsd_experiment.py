@@ -335,7 +335,18 @@ def calculate_rmsd(chain_residues, new_chain_residues):
 
 def find_cath_chain_matches(args):
     """Find matching chains within CATH superfamilies."""
-    # cath_domains = parse_cath_file(os.path.join(args.output_dir, "cath-domain-list-sample.txt"))
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    pdb_dir = os.path.join(args.output_dir, "pdb")
+    
+    pdb_rsync_cmd = f"rsync -rlpt -v -z --delete --port=33444 rsync.wwpdb.org::ftp/data/structures/divided/pdb/ {pdb_dir}"
+    os.system(pdb_rsync_cmd)
+
+    if not os.path.exists(os.path.join(args.output_dir, "cath-domain-list.txt")):
+        import subprocess
+        subprocess.run(["curl", "https://download.cathdb.info/cath/releases/latest-release/cath-classification-data/cath-domain-list.txt", "-o", os.path.join(args.output_dir, "cath-domain-list.txt")])
+
+
     cath_domains = parse_cath_file(os.path.join(args.output_dir, "cath-domain-list.txt"))
     dataset = CathDataset(os.path.join(args.output_dir, "pdb"), cath_domains)
     matches = []
