@@ -12,6 +12,7 @@ from bayes_design.utils import get_protein, align_and_crop, get_ball_mask, get_f
 from bayes_design.experiments.cath import parse_cath_file
 import logging
 import bdb
+from functools import lru_cache
 
 from tqdm import tqdm
 
@@ -342,8 +343,7 @@ def kabsch_alignment(target_coords, mobile_coords, coords_to_apply=None):
     rotation_matrix = np.dot(U, np.dot(np.diag([1, 1, d]), Vt))
     
     if coords_to_apply is not None: # Overwrite mobile_coords_centered with coords_to_apply
-        centroid_coords_to_apply = np.mean(coords_to_apply, axis=0)
-        mobile_coords_centered = coords_to_apply - centroid_coords_to_apply
+        mobile_coords_centered = coords_to_apply - centroid2
 
     # Step 7: Rotate the second set of coordinates (coords2)
     coords2_aligned = np.dot(mobile_coords_centered, rotation_matrix)
@@ -585,7 +585,7 @@ def find_cath_chain_matches(args, logdir, n_comparisons_per_domain=20, n_regions
 
     finalize_json_file(matches_file)
     
-def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_residue_range_2):
+def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_residue_range_2, structure_getter):
     """Calculate the RMSD between two chains.
     Args:
         chain_residues (list of Bio.PDB.Residue): The residues of the first chain.
@@ -593,18 +593,15 @@ def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_re
     Returns:
         rmsd (float): The RMSD between the two chains.
     """
-    from functools import lru_cache
 
-    @lru_cache(maxsize=500)
-    def get_structure_from_cache(domain):
-        return dataset.parser.get_structure(domain, dataset.get_domain_path(domain))
+    print(f"Cache status: {structure_getter.cache_info()}")
 
     # Load both proteins
-    domain_1_structure = get_structure_from_cache(domain_1)
+    domain_1_structure = structure_getter(domain_1)
     domain_1_chain = domain_1_structure[0][domain_1[4]]
     domain_1_coords, domain_1_seq, domain_1_res_ids = dataset.extract_seq_and_res_ids(domain_1_chain)
 
-    domain_2_structure = get_structure_from_cache(domain_2)
+    domain_2_structure = structure_getter(domain_2)
     domain_2_chain = domain_2_structure[0][domain_2[4]]
     domain_2_coords, domain_2_seq, domain_2_res_ids = dataset.extract_seq_and_res_ids(domain_2_chain)
 
@@ -622,28 +619,34 @@ def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_re
 
 
     # Align the full proteins based on the rotottranslation that aligns the scaffolds
-    # Get motif coords
     aligned_domain_1_coords_scaffold = np.array([coord for coord, res_id in zip(aligned_domain_1_coords, aligned_res_ids_1) if not(res_id >= overlap_residue_range_1[0] and res_id <= overlap_residue_range_1[1])])
     aligned_domain_2_coords_scaffold = np.array([coord for coord, res_id in zip(aligned_domain_2_coords, aligned_res_ids_2) if not(res_id >= overlap_residue_range_2[0] and res_id <= overlap_residue_range_2[1])])
-
     aligned_domain_2_coords = kabsch_alignment(np.array(aligned_domain_1_coords_scaffold), np.array(aligned_domain_2_coords_scaffold), coords_to_apply=np.array(aligned_domain_2_coords))
     # Reset aligned_domain_2_coords_scaffold based on newly aligned coordinates
     aligned_domain_2_coords_scaffold = np.array([coord for coord, res_id in zip(aligned_domain_2_coords, aligned_res_ids_2) if not(res_id >= overlap_residue_range_2[0] and res_id <= overlap_residue_range_2[1])])
+
+    if len(aligned_domain_1_coords_scaffold) < 20 or len(aligned_domain_2_coords_scaffold) < 20: # This filtering scheme assumes a reasonably large scaffold
+        return True, None
 
     aligned_domain_1_coords_motif = np.array([coord for coord, res_id in zip(aligned_domain_1_coords, aligned_res_ids_1) if (res_id >= overlap_residue_range_1[0] and res_id <= overlap_residue_range_1[1])])
     aligned_domain_2_coords_motif = np.array([coord for coord, res_id in zip(aligned_domain_2_coords, aligned_res_ids_2) if (res_id >= overlap_residue_range_2[0] and res_id <= overlap_residue_range_2[1])])
 
     # Compute pairwise distances between aligned_domain_1_coords_motif and aligned_domain_2_coords_scaffold
     distances_1 = np.sqrt(((aligned_domain_1_coords_motif[:, None, :] - aligned_domain_2_coords_scaffold[None, :, :])**2).sum(axis=-1))
-    if np.any(distances_1) < 1.5: # Give a lenient definition of a clash
+    if np.any(distances_1 < 2): # Give a lenient definition of a clash
         print(f"Clash found between {domain_1}, {domain_2}!")
-        return True
+        return True, None
     distances_2 = np.sqrt(((aligned_domain_2_coords_motif[:, None, :] - aligned_domain_1_coords_scaffold[None, :, :])**2).sum(axis=-1))
-    if np.any(distances_1) < 1.5: # Give a lenient definition of a clash
+    if np.any(distances_2 < 2): # Give a lenient definition of a clash
         print(f"Clash found between {domain_1}, {domain_2}!")
-        return True
+        return True, None
+    
+    # Remove cases where scaffold A at position i is close to scaffold B at position j but scaffold B at position i is not close to scaffold B at position J
+    
+    # Calculate RMSD
+    motif_rmsd = np.sqrt(((aligned_domain_1_coords_motif - aligned_domain_2_coords_motif)**2).sum(axis=-1)).mean().item()
             
-    return False
+    return False, motif_rmsd
 
 
 def select_top_case_studies(args):
@@ -656,14 +659,27 @@ def select_top_case_studies(args):
     
     superfamily_top_case_studies = defaultdict(list)
     n = 0
-    for domain_match in matches:
-        # Check if matching motif from protein A clashes with a non-motif region in protein B. If so, drop it.
-        if check_clash(dataset, domain_match["domain_name"], domain_match["matching_domain_name"], domain_match["overlap_residue_range_1"], domain_match["overlap_residue_range_2"]):
-            continue
-        superfamily_top_case_studies[tuple(domain_match["superfamily"])].append(domain_match)
-        n += 1
-        print(n)
-    print("N left after filtering clashes:", n)
+
+    @lru_cache(maxsize=700)
+    def cache_structure_getter(domain):
+        return dataset.parser.get_structure(domain, dataset.get_domain_path(domain))
+    
+    matches = matches[:100]
+    with tqdm(total=len(matches)) as pbar:
+        for domain_match in matches:
+            pbar.update(1)
+            if domain_match["domain_name"][:4] == domain_match["matching_domain_name"][:4]:
+                continue
+            # Check if matching motif from protein A clashes with a non-motif region in protein B. If so, drop it.
+            clash, rmsd = check_clash(dataset, domain_match["domain_name"], domain_match["matching_domain_name"], domain_match["overlap_residue_range_1"], domain_match["overlap_residue_range_2"], cache_structure_getter)
+
+            if clash:
+                continue
+            
+            domain_match["rmsd"] = rmsd # Replace previous rmsd (motif-aligned motif rmsd) with new rmsd (scaffold-aligned motif rmsd)
+            superfamily_top_case_studies[tuple(domain_match["superfamily"])].append(domain_match)
+            n += 1
+        print("N left after filtering clashes and same source pdbs:", n)
 
     top_case_studies = []
     for superfamily, superfamily_matches in superfamily_top_case_studies.items():
