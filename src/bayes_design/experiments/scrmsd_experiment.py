@@ -429,9 +429,6 @@ def append_record(file_path, data, is_first=False):
 
 def finalize_json_file(file_path):
     """Close the JSON array with a closing bracket"""
-    breakpoint()
-    # TODO: test this
-
     # Remove the last comma and finalize the JSON array with a closing bracket
     with open(file_path, 'rb+') as f:
         f.seek(-1, os.SEEK_END)
@@ -609,6 +606,37 @@ def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_re
     aligned_res_ids_1, aligned_res_ids_2, aligned_seq_1, aligned_seq_2, aligned_domain_1_coords, aligned_domain_2_coords = align_sequences_with_res_ids(
         domain_1_seq, torch.tensor(domain_1_res_ids), domain_2_seq, torch.tensor(domain_2_res_ids), domain_1_coords, domain_2_coords
     )
+    
+    def check_proximity_to_disordered(aligned_res_ids, overlap_residue_range):
+        # Return early if motif is within 5 positions of n terminus, c terminus, or a missing residue
+        n_terminus_res_id = [res_id for res_id in aligned_res_ids if res_id is not None][0]
+        distance_to_n_terminus = overlap_residue_range[0] - n_terminus_res_id
+        if distance_to_n_terminus <= 5:
+            print("CLOSE TO N")
+            return True
+        # Check proximity to c terminus
+        c_terminus_res_id = [res_id for res_id in aligned_res_ids if res_id is not None][-1]
+        distance_to_c_terminus = c_terminus_res_id - overlap_residue_range[1]
+        if distance_to_c_terminus <= 5:
+            print("CLOSE TO C")
+            return True
+        # Check proximity to missing residue
+        overlap_indices = [i for i, res_id in enumerate(aligned_res_ids) if res_id in overlap_residue_range]
+        none_indices = [i for i, res_id in enumerate(aligned_res_ids) if res_id is None]
+        for overlap_idx in overlap_indices:
+            for none_idx in none_indices:
+                distance = abs(overlap_idx - none_idx)
+                if distance <= 5:
+                    print("CLOSE TO NONE")
+                    return True
+                
+        return False
+            
+    if check_proximity_to_disordered(aligned_res_ids_1, overlap_residue_range_1):
+        return True, None
+        
+    if check_proximity_to_disordered(aligned_res_ids_2, overlap_residue_range_2):
+        return True, None
 
     # Remove positions that are None in either protein
     aligned_domain_coords = [(coord_1, coord_2, res_id_1, res_id_2) for coord_1, coord_2, res_id_1, res_id_2 in zip(aligned_domain_1_coords, aligned_domain_2_coords, aligned_res_ids_1, aligned_res_ids_2) if coord_1 is not None and coord_2 is not None]
@@ -627,6 +655,12 @@ def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_re
 
     if len(aligned_domain_1_coords_scaffold) < 20 or len(aligned_domain_2_coords_scaffold) < 20: # This filtering scheme assumes a reasonably large scaffold
         return True, None
+    
+    # We want the scaffolds to be reasonably well-aligned
+    scaffold_rmsd = np.sqrt(((aligned_domain_1_coords_scaffold - aligned_domain_2_coords_scaffold)**2).sum(axis=-1).mean()).item()
+    if scaffold_rmsd > 6:
+        print("SCAFFOLD error too large")
+        return True, None
 
     aligned_domain_1_coords_motif = np.array([coord for coord, res_id in zip(aligned_domain_1_coords, aligned_res_ids_1) if (res_id >= overlap_residue_range_1[0] and res_id <= overlap_residue_range_1[1])])
     aligned_domain_2_coords_motif = np.array([coord for coord, res_id in zip(aligned_domain_2_coords, aligned_res_ids_2) if (res_id >= overlap_residue_range_2[0] and res_id <= overlap_residue_range_2[1])])
@@ -641,50 +675,68 @@ def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_re
         print(f"Clash found between {domain_1}, {domain_2}!")
         return True, None
     
-    # Remove cases where scaffold A at position i is close to scaffold B at position j but scaffold B at position i is not close to scaffold B at position J
-    
+    # if "5dyi" in domain_1 and "5ifs" in domain_2:
+    #     breakpoint()
+
     # Calculate RMSD
-    motif_rmsd = np.sqrt(((aligned_domain_1_coords_motif - aligned_domain_2_coords_motif)**2).sum(axis=-1)).mean().item()
+    motif_rmsd = np.sqrt(((aligned_domain_1_coords_motif - aligned_domain_2_coords_motif)**2).sum(axis=-1).mean()).item()
             
     return False, motif_rmsd
 
 
-def select_top_case_studies(args):
+def filter_matches(args):
     """Iterate over matches and identify the PDB chains  corresponding to the top 100 'top_linear_rmsd' values, excluding duplicates (i.e. if there is an entry for PDB A and PDB B, do not consider PDB B compared to PDB A). Also, only consider each domain once - i.e. if PDB B is a match for PDB A, do not search for additional matches to PDB B. Write these out to a json in the same format as the input."""
     with open(os.path.join(args.output_dir, "cath_matches.txt"), "r") as f:
         matches = json.load(f)
 
     cath_domains = parse_cath_file(os.path.join(args.input_dir, "cath-domain-list.txt"))
     dataset = CathDataset(os.path.join(args.input_dir, "pdb"), cath_domains)
+    matches_file = os.path.join(args.output_dir, "cath_matches_remove_clashes.txt")
+    existing_run = setup_json_file(matches_file)
+    if existing_run: raise ValueError("File cath_matches_remove_clashes.txt already exists")
     
-    superfamily_top_case_studies = defaultdict(list)
     n = 0
 
     @lru_cache(maxsize=700)
     def cache_structure_getter(domain):
         return dataset.parser.get_structure(domain, dataset.get_domain_path(domain))
     
-    matches = matches[:100]
+    # matches = matches[:500]
     with tqdm(total=len(matches)) as pbar:
         for domain_match in matches:
             pbar.update(1)
+            # Remove matches within the same pdb id, as these are less interesting
             if domain_match["domain_name"][:4] == domain_match["matching_domain_name"][:4]:
                 continue
             # Check if matching motif from protein A clashes with a non-motif region in protein B. If so, drop it.
             clash, rmsd = check_clash(dataset, domain_match["domain_name"], domain_match["matching_domain_name"], domain_match["overlap_residue_range_1"], domain_match["overlap_residue_range_2"], cache_structure_getter)
-
             if clash:
                 continue
             
             domain_match["rmsd"] = rmsd # Replace previous rmsd (motif-aligned motif rmsd) with new rmsd (scaffold-aligned motif rmsd)
-            superfamily_top_case_studies[tuple(domain_match["superfamily"])].append(domain_match)
+            # Add match
+            append_record(matches_file, domain_match)
             n += 1
         print("N left after filtering clashes and same source pdbs:", n)
+        
+    finalize_json_file(matches_file)
+
+def select_top_case_studies(args):
+    """Iterate over matches and identify the PDB chains  corresponding to the top 100 'top_linear_rmsd' values, excluding duplicates (i.e. if there is an entry for PDB A and PDB B, do not consider PDB B compared to PDB A). Also, only consider each domain once - i.e. if PDB B is a match for PDB A, do not search for additional matches to PDB B. Write these out to a json in the same format as the input."""
+    with open(os.path.join(args.output_dir, "cath_matches_remove_clashes_demo.txt"), "r") as f:
+        matches = json.load(f)
+    
+    superfamily_top_case_studies = defaultdict(list)
+    # matches = matches[:500]
+
+    # Sort by superfamily
+    for domain_match in matches:
+        superfamily_top_case_studies[tuple(domain_match["superfamily"])].append(domain_match)
 
     top_case_studies = []
     for superfamily, superfamily_matches in superfamily_top_case_studies.items():
         top_superfamily_matches = sorted(superfamily_matches, key=lambda x: x["rmsd"])
-        top_case_studies.append(top_superfamily_matches[0])
+        top_case_studies.append(top_superfamily_matches[-1])
 
     top_case_studies = sorted(top_case_studies, key=lambda x: x["rmsd"])[-args.num_top_case_studies:]
     
@@ -768,9 +820,12 @@ if __name__ == "__main__":
     )
 
     # find_cath_chain_matches(args, logdir)
+    # TODO: Fix find_cath_chain_matches to use old syntax (no coords)
+    filter_matches(args)
     top_case_studies = select_top_case_studies(args)
+    print(len(top_case_studies))
 
-    for top_case_study in top_case_studies[:5]:
+    for top_case_study in top_case_studies[-5:]:
         print("Superfamily:", top_case_study["superfamily"])
         print("Domain:", top_case_study["domain_name"])
         print("Overlap residue range:", top_case_study["overlap_residue_range_1"])
