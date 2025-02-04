@@ -729,8 +729,74 @@ def select_top_case_studies(args):
     superfamily_top_case_studies = defaultdict(list)
     # matches = matches[:500]
 
-    # Sort by superfamily
+    # Drop duplicates
+    print("Number of matches before deduplication on pdb id:", len(matches))
+    matches_dedup = []
+    domain_name_to_idx = dict()
     for domain_match in matches:
+        domain_name = domain_match["domain_name"][:4]
+        matching_domain_name = domain_match["matching_domain_name"][:4]
+        
+        domain_name_present = domain_name in domain_name_to_idx.keys()
+        matching_domain_name_present = matching_domain_name in domain_name_to_idx.keys()
+        names_to_drop = []
+        if domain_name_present and matching_domain_name_present:
+            if matches_dedup[domain_name_to_idx[domain_name]]["rmsd"] < domain_match["rmsd"] and matches_dedup[domain_name_to_idx[matching_domain_name]]["rmsd"] < domain_match["rmsd"]:
+                domain_name_idx = domain_name_to_idx[domain_name]
+                matching_domain_name_idx = domain_name_to_idx[matching_domain_name]
+                names_to_drop.append(matches_dedup[domain_name_idx]["domain_name"][:4])
+                names_to_drop.append(matches_dedup[domain_name_idx]["matching_domain_name"][:4])
+                names_to_drop.append(matches_dedup[matching_domain_name_idx]["domain_name"][:4])
+                names_to_drop.append(matches_dedup[matching_domain_name_idx]["matching_domain_name"][:4])
+                for name in names_to_drop:
+                    domain_name_to_idx.pop(name, None)
+                matches_dedup[domain_name_idx] = None
+                matches_dedup[matching_domain_name_idx] = None
+                
+                matches_dedup.append(domain_match)
+                domain_name_to_idx[domain_name] = len(matches_dedup) - 1
+                domain_name_to_idx[matching_domain_name] = len(matches_dedup) - 1
+            else: # do not add
+                pass 
+        elif domain_name_present:
+            if matches_dedup[domain_name_to_idx[domain_name]]["rmsd"] < domain_match["rmsd"]:  # replace
+                domain_name_idx = domain_name_to_idx[domain_name]
+                names_to_drop.append(matches_dedup[domain_name_idx]["domain_name"][:4])
+                names_to_drop.append(matches_dedup[domain_name_idx]["matching_domain_name"][:4])
+                for name in names_to_drop:
+                    domain_name_to_idx.pop(name, None)
+                matches_dedup[domain_name_idx] = None
+                
+                matches_dedup.append(domain_match)
+                domain_name_to_idx[domain_name] = len(matches_dedup) - 1
+                domain_name_to_idx[matching_domain_name] = len(matches_dedup) - 1
+            else: # do not add
+                pass 
+        elif matching_domain_name_present:
+            if matches_dedup[domain_name_to_idx[matching_domain_name]]["rmsd"] < domain_match["rmsd"]:  # replace
+                matching_domain_name_idx = domain_name_to_idx[matching_domain_name]
+                names_to_drop.append(matches_dedup[matching_domain_name_idx]["domain_name"][:4])
+                names_to_drop.append(matches_dedup[matching_domain_name_idx]["matching_domain_name"][:4])
+                for name in names_to_drop:
+                    domain_name_to_idx.pop(name, None)
+                matches_dedup[matching_domain_name_idx] = None
+
+                matches_dedup.append(domain_match)
+                domain_name_to_idx[domain_name] = len(matches_dedup) - 1
+                domain_name_to_idx[matching_domain_name] = len(matches_dedup) - 1
+                
+        else: # add
+            matches_dedup.append(domain_match)
+            domain_name_to_idx[domain_name] = len(matches_dedup) - 1
+            domain_name_to_idx[matching_domain_name] = len(matches_dedup) - 1
+
+    matches_dedup = [match for match in matches_dedup if match is not None]
+    print("Number of matches after deduplication on pdb id:", len(matches_dedup))
+    assert len(set([domain_match["domain_name"][:4] for domain_match in matches_dedup])) == len(matches_dedup)
+    assert len(set([domain_match["matching_domain_name"][:4] for domain_match in matches_dedup])) == len(matches_dedup)
+
+    # Sort by superfamily
+    for domain_match in matches_dedup:
         superfamily_top_case_studies[tuple(domain_match["superfamily"])].append(domain_match)
 
     top_case_studies = []
@@ -821,7 +887,7 @@ if __name__ == "__main__":
 
     # find_cath_chain_matches(args, logdir)
     # TODO: Fix find_cath_chain_matches to use old syntax (no coords)
-    filter_matches(args)
+    # filter_matches(args)
     top_case_studies = select_top_case_studies(args)
     print(len(top_case_studies))
 
