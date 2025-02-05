@@ -200,7 +200,6 @@ class ProteinMPNNWrapper(nn.Module):
             probs ((N x 20) torch.Tensor): a vector of probabilities for the next
                 token
         """
-
         N = len(token_to_decode)
         L = len(seq[0])
         assert L == struct.shape[0], "Sequence length must match the number of residues in the provided structure"
@@ -278,9 +277,10 @@ class CSDesign(nn.Module):
         self.balance_factor = balance_factor
 
     def forward(self, seq, struct, decode_order, token_to_decode, mask_type='bidirectional_autoregressive'):
+        seq_pro, seq_anti = seq[0]
         struct_pro, struct_anti = struct
-        p_seq_struct_pro = self.seq_struct_model(seq=seq, struct=struct_pro, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
-        p_seq_struct_anti = self.seq_struct_model(seq=seq, struct=struct_anti, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
+        p_seq_struct_pro = self.seq_struct_model(seq=[seq_pro], struct=struct_pro, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
+        p_seq_struct_anti = self.seq_struct_model(seq=[seq_anti], struct=struct_anti, decode_order=decode_order, token_to_decode=token_to_decode, mask_type=mask_type).clone()
 
         # Add a "balance factor" so that we don't end up with large probability ratios at the tails of the distributions
         p_seq_struct_pro += self.balance_factor

@@ -96,31 +96,40 @@ def get_n_to_c_decode_order(seq):
     decode_order = fixed_indices + indices_to_predict
     return decode_order
 
-
 ####################################################################################
 # Decode Algorithms
 ####################################################################################
 
 def greedy_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):
-    if from_scratch:
-        mask_type = 'bidirectional_autoregressive'
-    else:
-        mask_type = 'bidirectional_mlm'
-    current_seq = seq
-    log_probs = []
-    for i, idx in enumerate(decode_order):
-        if fixed_position_mask[idx] == True:
-            # Do not change this token
-            continue
-        probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([idx]), mask_type=mask_type)
-        next_item = torch.argmax(probs)
-        log_probs.append(np.log(np.max(probs.detach().cpu().numpy())))
-        aa = AMINO_ACID_ORDER[next_item]
-        current_seq = list(current_seq)
-        current_seq[idx] = aa
-        current_seq = ''.join(current_seq)
-    print("log probs:", log_probs)
-    print("log prob:", np.array(log_probs).sum())
+    with torch.no_grad():
+        if from_scratch:
+            mask_type = 'bidirectional_autoregressive'
+        else:
+            mask_type = 'bidirectional_mlm'
+        current_seq = seq
+        log_probs = []
+        for i, idx in enumerate(decode_order):
+            if fixed_position_mask[idx] == True:
+                # Do not change this token
+                continue
+            probs = prob_model(seq=[current_seq], struct=struct, decode_order=decode_order, token_to_decode=torch.tensor([idx]), mask_type=mask_type)
+            next_item = torch.argmax(probs)
+            log_probs.append(np.log(np.max(probs.detach().cpu().numpy())))
+            aa = AMINO_ACID_ORDER[next_item]
+            if isinstance(current_seq, tuple):
+                current_seq_0 = list(current_seq[0])
+                current_seq_0[idx] = aa
+                current_seq_0 = ''.join(current_seq_0)
+                current_seq_1 = list(current_seq[1])
+                current_seq_1[idx] = aa
+                current_seq_1 = ''.join(current_seq_1)
+                current_seq = (current_seq_0, current_seq_1)
+            else:
+                current_seq = list(current_seq)
+                current_seq[idx] = aa
+                current_seq = ''.join(current_seq)
+        print("log probs:", log_probs)
+        print("log prob:", np.array(log_probs).sum())
     return current_seq
 
 def sample_decode(prob_model, struct, seq, decode_order, fixed_position_mask, from_scratch):

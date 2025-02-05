@@ -24,6 +24,7 @@ import json
 import gzip
 import shutil
 import random
+from transformers import AutoTokenizer, EsmForProteinFolding
 
 from collections import defaultdict
 from torch.nn import functional as F
@@ -93,7 +94,7 @@ class PDBDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.pdb_paths)
     
-    def extract_seq_and_res_ids(self, chain):
+    def extract_seq_and_res_ids(self, chain, atoms_to_return=["CA"]):
         sequence = []
         res_ids = []
         coords = []
@@ -101,7 +102,10 @@ class PDBDataset(torch.utils.data.Dataset):
             if residue.has_id("CA"):  # Filter to only include amino acids
                 sequence.append(three_letter_to_one_letter(residue.get_resname()))
                 res_ids.append(residue.id[1])
-                coords.append(residue["CA"].get_coord())
+                try:
+                    coords.append([residue[atom].get_coord() for atom in atoms_to_return])
+                except KeyError:
+                    coords.append([[None] * 3 for atom in atoms_to_return])
         return coords, sequence, res_ids
     
     def __getitem__(self, idx):
@@ -135,7 +139,6 @@ class CathDataset(PDBDataset):
     def get_domain_path(self, domain_name):
         pdb_id = domain_name[:4].lower()
         middle_chars = pdb_id[1:3]
-        # TODO: Make sure this points to the right place and make sure that I can replicate the creation of this dataset
         return os.path.join(self.pdb_dir, middle_chars, f"pdb{pdb_id}.ent")
 
     def get_superfamily_domains(self, domain):
@@ -181,6 +184,7 @@ def align_sequences_with_res_ids(seq1, res_ids1, seq2, res_ids2, coords1, coords
         aligned_seq1 ((L) list of str): The aligned sequence of seq1.
         aligned_seq2 ((L) list of str): The aligned sequence
     """
+    A, D = len(coords1[0]), len(coords1[0][0])
     res_ids1 = res_ids1.tolist()
     res_ids2 = res_ids2.tolist()
     # Align sequences
@@ -204,7 +208,7 @@ def align_sequences_with_res_ids(seq1, res_ids1, seq2, res_ids2, coords1, coords
             idx1 += 1
         else:
             aligned_res_ids1.append(None)
-            aligned_coords1.append(None)
+            aligned_coords1.append([[None] * D] * A)
 
         if aligned_seq2[i] != '-':
             aligned_res_ids2.append(res_ids2[idx2])
@@ -212,7 +216,7 @@ def align_sequences_with_res_ids(seq1, res_ids1, seq2, res_ids2, coords1, coords
             idx2 += 1
         else:
             aligned_res_ids2.append(None)
-            aligned_coords2.append(None)
+            aligned_coords2.append([[None] * D] * A)
 
     # truncate beginning and end if missing residues on either sequence
     beginning_idx = 0
@@ -606,6 +610,11 @@ def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_re
     aligned_res_ids_1, aligned_res_ids_2, aligned_seq_1, aligned_seq_2, aligned_domain_1_coords, aligned_domain_2_coords = align_sequences_with_res_ids(
         domain_1_seq, torch.tensor(domain_1_res_ids), domain_2_seq, torch.tensor(domain_2_res_ids), domain_1_coords, domain_2_coords
     )
+    # Collapse atom dimension
+    aligned_domain_1_coords, aligned_domain_2_coords = [coord[0] for coord in aligned_domain_1_coords], [coord[0] for coord in aligned_domain_2_coords]
+
+    if len(aligned_res_ids_1) > 650:
+        return True, None
     
     def check_proximity_to_disordered(aligned_res_ids, overlap_residue_range):
         # Return early if motif is within 5 positions of n terminus, c terminus, or a missing residue
@@ -639,7 +648,7 @@ def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_re
         return True, None
 
     # Remove positions that are None in either protein
-    aligned_domain_coords = [(coord_1, coord_2, res_id_1, res_id_2) for coord_1, coord_2, res_id_1, res_id_2 in zip(aligned_domain_1_coords, aligned_domain_2_coords, aligned_res_ids_1, aligned_res_ids_2) if coord_1 is not None and coord_2 is not None]
+    aligned_domain_coords = [(coord_1, coord_2, res_id_1, res_id_2) for coord_1, coord_2, res_id_1, res_id_2 in zip(aligned_domain_1_coords, aligned_domain_2_coords, aligned_res_ids_1, aligned_res_ids_2) if coord_1[0] is not None and coord_2[0] is not None]
     aligned_domain_1_coords, aligned_domain_2_coords, aligned_res_ids_1, aligned_res_ids_2 = zip(*aligned_domain_coords)
 
     full_seq_identity, beg, end = compute_full_sequence_identity(aligned_seq_1, aligned_seq_2)
@@ -723,7 +732,7 @@ def filter_matches(args):
 
 def select_top_case_studies(args):
     """Iterate over matches and identify the PDB chains  corresponding to the top 100 'top_linear_rmsd' values, excluding duplicates (i.e. if there is an entry for PDB A and PDB B, do not consider PDB B compared to PDB A). Also, only consider each domain once - i.e. if PDB B is a match for PDB A, do not search for additional matches to PDB B. Write these out to a json in the same format as the input."""
-    with open(os.path.join(args.output_dir, "cath_matches_remove_clashes_demo.txt"), "r") as f:
+    with open(os.path.join(args.output_dir, "cath_matches_remove_clashes.txt"), "r") as f:
         matches = json.load(f)
     
     superfamily_top_case_studies = defaultdict(list)
@@ -805,52 +814,220 @@ def select_top_case_studies(args):
         top_case_studies.append(top_superfamily_matches[-1])
 
     top_case_studies = sorted(top_case_studies, key=lambda x: x["rmsd"])[-args.num_top_case_studies:]
-    
+
+    with open(os.path.join(args.output_dir, "cath_matches_sorted.txt"), "w") as f:
+        json.dump(top_case_studies, f, indent=2)
+
     return top_case_studies
 
+def graft_sequence(seq_1, seq_2, seq_3):
+    seq_1_grafted = []
+    for seq_1_char, seq_2_char, seq_3_char in zip(list(seq_1), list(seq_2), list(seq_3)):
+        if seq_1_char != "-":
+            seq_1_grafted.append(seq_1_char)
+        elif seq_2_char != "-":
+            seq_1_grafted.append(seq_2_char)
+        elif seq_3_char != "-":
+            seq_1_grafted.append(seq_3_char)
+        else:
+            raise ValueError("All sequences contain the '-' character at the same position")            
 
-def inverse_fold_proteinmpnn(args):
+    return "".join(seq_1_grafted)
+
+def inverse_fold(args):
+
+
+    device = torch.device(f"cuda:{args.device}" if (torch.cuda.is_available()) else "cpu")
+    cs_design = model_dict["cs_design"](device=device)
+    protein_mpnn = model_dict["protein_mpnn"](device=device)
+
+    with open(os.path.join(args.output_dir, "cath_matches_sorted.txt"), "r") as f:
+        matches = json.load(f)
+
+    cath_domains = parse_cath_file(os.path.join(args.input_dir, "cath-domain-list.txt"))
+    dataset = CathDataset(os.path.join(args.input_dir, "pdb"), cath_domains)
+
     
-    for top_match in os.listdir(os.path.join(args.output_dir, "top_case_studies")):
-        pdb_id, chain_id = top_match.split("_")
-        with open(os.path.join(args.output_dir, "top_case_studies", top_match, "match.json"), "r") as f:
-            match = json.load(f)
-        matching_pdb_id = match["matching_pdb_id"]
-        matching_chain_id = match["matching_chain_id"]
-        matching_pdb_path = os.path.join(args.output_dir, "top_case_studies", matching_pdb_id, matching_chain_id)
-        matching_pdb = PDBParser().get_structure(matching_pdb_id, matching_pdb_path)
-        matching_chain = matching_pdb[0][matching_chain_id]
-        matching_chain_residues = list(matching_chain.get_residues())
-        matching_chain_residues = matching_chain_residues[match["overlap_residue_range_2"][0]:match["overlap_residue_range_2"][1]+1]
-        matching_chain_coords = np.array([residue["CA"].get_coord() for residue in matching_chain_residues])
+    results = []
+    for match in matches:
+        domain_1_name = match["domain_name"]
+        domain_2_name = match["matching_domain_name"]
 
-        # Get the protein sequence
-        matching_seq = get_sequence(matching_chain)
-        matching_seq = matching_seq[match["overlap_residue_range_2"][0]:match["overlap_residue_range_2"][1]+1]
+        domain_1_structure = dataset.parser.get_structure(domain_1_name, 
+                                                        dataset.get_domain_path(domain_1_name))
+        domain_1_chain = domain_1_structure[0][domain_1_name[4]]
+        domain_1_coords, domain_1_seq, domain_1_res_ids = dataset.extract_seq_and_res_ids(domain_1_chain, atoms_to_return=["N", "CA", "C", "O"])
+
+        domain_2_structure = dataset.parser.get_structure(domain_2_name, 
+                                                        dataset.get_domain_path(domain_2_name))
+        domain_2_chain = domain_2_structure[0][domain_2_name[4]]
+        domain_2_coords, domain_2_seq, domain_2_res_ids = dataset.extract_seq_and_res_ids(domain_2_chain, atoms_to_return=["N", "CA", "C", "O"])
+
+        aligned_res_ids1, aligned_res_ids2, aligned_seq1, aligned_seq2, aligned_coords1, aligned_coords2 = align_sequences_with_res_ids(
+            domain_1_seq, torch.tensor(domain_1_res_ids),
+            domain_2_seq, torch.tensor(domain_2_res_ids),
+            domain_1_coords, domain_2_coords
+        )
+        
+        aligned_coords1, aligned_coords2 = torch.tensor(np.array(aligned_coords1, dtype=np.float32)), torch.tensor(np.array(aligned_coords2, dtype=np.float32))
 
         # Get the fixed position mask
-        fixed_position_mask = get_fixed_position_mask(matching_seq)
+        fixed_position_mask = np.ones(len(aligned_res_ids1), dtype=bool)
+        for i, domain_1_res_id in enumerate(aligned_res_ids1):
+            if domain_1_res_id is not None and domain_1_res_id >= match["overlap_residue_range_1"][0] and domain_1_res_id <= match["overlap_residue_range_1"][1]:
+                fixed_position_mask[i] = 0
 
-        # Get the ball mask
-        ball_mask = get_ball_mask(matching_seq)
+        aligned_seq1 = ''.join(['-' if not fixed else char for char, fixed in zip(aligned_seq1, fixed_position_mask)])
+        aligned_seq2 = ''.join(['-' if not fixed else char for char, fixed in zip(aligned_seq2, fixed_position_mask)])
+        # Decode order defines the order in which the masked positions are predicted
+        decode_order = decode_order_dict["n_to_c"](aligned_seq1)
+        # breakpoint()
+        os.makedirs(os.path.join(args.output_dir, "reference_coords"), exist_ok=True)
+        coords_1_path = os.path.join(args.output_dir, "reference_coords", domain_1_name + ".pt")
+        coords_2_path = os.path.join(args.output_dir, "reference_coords", domain_2_name + ".pt")
+        torch.save(aligned_coords1, coords_1_path)
+        torch.save(aligned_coords2, coords_2_path)
+        
+        pred_sequence = decode_algorithm_dict["greedy"](prob_model=cs_design, struct=(aligned_coords1, aligned_coords2), seq=(aligned_seq1, aligned_seq2), decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)[0]
+        pred_sequence = graft_sequence(pred_sequence, aligned_seq1, aligned_seq2)
+        results.append({
+            "model_name": "cs_design",
+            "domain_name_pro": domain_1_name,
+            "domain_name_anti": domain_2_name,
+            "sequence_pro": aligned_seq1,
+            "sequence_anti": aligned_seq2,
+            "motif_mask": (~fixed_position_mask).astype(int).tolist(),
+            "pred_sequence": pred_sequence,
+            "coords_path_pro": coords_1_path,
+            "coords_path_anti": coords_2_path,
+        })
+        
+        pred_sequence = decode_algorithm_dict["greedy"](prob_model=cs_design, struct=(aligned_coords2, aligned_coords1), seq=(aligned_seq2, aligned_seq1), decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)[0]
+        pred_sequence = graft_sequence(pred_sequence, aligned_seq2, aligned_seq1)
+        results.append({
+            "model_name": "cs_design",
+            "domain_name_pro": domain_2_name,
+            "domain_name_anti": domain_1_name,
+            "sequence_pro": aligned_seq2,
+            "sequence_anti": aligned_seq1,
+            "motif_mask": (~fixed_position_mask).astype(int).tolist(),
+            "pred_sequence": pred_sequence,
+            "coords_path_pro": coords_2_path,
+            "coords_path_anti": coords_1_path,
+        })
 
-        # Get the protein
-        protein = get_protein(matching_seq)
+        pred_sequence = decode_algorithm_dict["greedy"](prob_model=protein_mpnn, struct=aligned_coords1, seq=aligned_seq1, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)
+        pred_sequence = graft_sequence(pred_sequence, aligned_seq1, aligned_seq2)
+        results.append({
+            "model_name": "protein_mpnn",
+            "domain_name_pro": domain_1_name,
+            "domain_name_anti": domain_2_name,
+            "sequence_pro": aligned_seq1,
+            "sequence_anti": aligned_seq2,
+            "motif_mask": (~fixed_position_mask).astype(int).tolist(),
+            "pred_sequence": pred_sequence,
+            "coords_path_pro": coords_1_path,
+            "coords_path_anti": coords_2_path,
+        })
 
-        # Load the model
-        model = model_dict["proteinmpnn"]()
-        model.load_state_dict(torch.load(os.path.join(args.output_dir, "proteinmpnn.pt")))
-        model.eval()
+        pred_sequence = decode_algorithm_dict["greedy"](prob_model=protein_mpnn, struct=aligned_coords2, seq=aligned_seq2, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)
+        pred_sequence = graft_sequence(pred_sequence, aligned_seq2, aligned_seq1)
+        results.append({
+            "model_name": "protein_mpnn",
+            "domain_name_pro": domain_2_name,
+            "domain_name_anti": domain_1_name,
+            "sequence_pro": aligned_seq2,
+            "sequence_anti": aligned_seq1,
+            "motif_mask": (~fixed_position_mask).astype(int).tolist(),
+            "pred_sequence": pred_sequence,
+            "coords_path_pro": coords_2_path,
+            "coords_path_anti": coords_1_path,
+        })
+        
 
-        # Inverse fold
-        with torch.no_grad():
-            pred = model.inverse_fold(protein, fixed_position_mask, ball_mask)
-
-        # Save the inverse folded protein
-        with open(os.path.join(args.output_dir, "top_case_studies", top_match, "inverse_folded_protein.pdb"), "w") as f:
-            f.write(pred)
+    with open(os.path.join(args.output_dir, "sequence_predictions.txt"), "w") as f:
+        json.dump(results, f, indent=2)
 
 
+from transformers.models.esm.openfold_utils.protein import to_pdb, Protein as OFProtein
+from transformers.models.esm.openfold_utils.feats import atom14_to_atom37
+
+def convert_outputs_to_pdb(outputs):
+    final_atom_positions = atom14_to_atom37(outputs["positions"][-1], outputs)
+    outputs = {k: v.to("cpu").numpy() for k, v in outputs.items()}
+    final_atom_positions = final_atom_positions.cpu().numpy()
+    final_atom_mask = outputs["atom37_atom_exists"]
+    pdbs = []
+    for i in range(outputs["aatype"].shape[0]):
+        aa = outputs["aatype"][i]
+        pred_pos = final_atom_positions[i]
+        mask = final_atom_mask[i]
+        resid = outputs["residue_index"][i] + 1
+        pred = OFProtein(
+            aatype=aa,
+            atom_positions=pred_pos,
+            atom_mask=mask,
+            residue_index=resid,
+            b_factors=outputs["plddt"][i],
+            chain_index=outputs["chain_index"][i] if "chain_index" in outputs else None,
+        )
+        pdbs.append(to_pdb(pred))
+    return pdbs
+
+def esmfold(args):
+
+    tokenizer = AutoTokenizer.from_pretrained("facebook/esmfold_v1")
+    # model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", low_cpu_mem_usage=True)
+    # model.esm = model.esm.half() # This is okay, it was trained in fp16
+    # model = model.to("cuda:1")
+
+    with open(os.path.join(args.output_dir, "sequence_predictions.txt"), "r") as f:
+        sequence_predictions = json.load(f)
+
+    pred_dir = os.path.join(args.output_dir, "pred_coords")
+    os.makedirs(pred_dir, exist_ok=True)
+
+    with tqdm(total=len(sequence_predictions)) as pbar:
+        for sequence_prediction in sequence_predictions:
+            pbar.update(1)
+            # # Uncomment this line if your GPU memory is 16GB or less, or if you're folding longer (over 600 or so) sequences
+            # # model.trunk.set_chunk_size(64)
+            # # Length: 700. Fits on a 24GB VRAM GPU
+            # test_protein = "MGAGASAEEKHSRELEKKLKEDAEKDARTVKLLLLGAGESGKSTIVKQMKIIHQDGYSLEECLEFIAIIYGNTLQSILAIVRAMTTLNIQYGDSARQDDARKLMHMADTIEEGTMPKEMSDIIQRLWKDSGIQACFERASEYQLNDSAGYYLSDLERLVTPGYVPTEQDVLRSRVKTTGIIETQFSFKDLNFRMFDVGGQRSERKKWIHCFEGVTCIIFIAALSAYDMVLVEDDEVNRMHESLHLFNSICNHRYFATTSIVLFLNKKDVFFEKIKKAHLSICFPDYDGPNTYEDAGNYIKVQFLELNMRRDVKEIYSHMTCATDTQNVKFVFDAVTDIIIKENLKDCGLFMGAGASAEEKHSRELEKKLKEDAEKDARTVKLLLLGAGESGKSTIVKQMKIIHQDGYSLEECLEFIAIIYGNTLQSILAIVRAMTTLNIQYGDSARQDDARKLMHMADTIEEGTMPKEMSDIIQRLWKDSGIQACFERASEYQLNDSAGYYLSDLERLVTPGYVPTEQDVLRSRVKTTGIIETQFSFKDLNFRMFDVGGQRSERKKWIHCFEGVTCIIFIAALSAYDMVLVEDDEVNRMHESLHLFNSICNHRYFATTSIVLFLNKKDVFFEKIKKAHLSICFPDYDGPNTYEDAGNYIKVQFLELNMRRDVKEIYSHMTCATDTQNVKFVFDAVTDIIIKENLKDCGLF"
+            try:
+                tokenized_input = tokenizer([sequence_prediction["pred_sequence"]], return_tensors="pt", add_special_tokens=False)['input_ids']
+            except:
+                breakpoint()
+            continue
+            tokenized_input = tokenized_input.to("cuda:1")
+            
+            with torch.no_grad():
+                output = model(tokenized_input)
+
+            # Save pred coords
+            pred_coords = output["positions"][-1, 0, :, :4, :]
+            domain_name_pro, domain_name_anti, model_name = sequence_prediction["domain_name_pro"], sequence_prediction["domain_name_anti"], sequence_prediction["model_name"]
+            file_name = f"pro_{domain_name_pro}_anti_{domain_name_anti}_model_{model_name}"
+            coords_file_name = file_name + ".pt"
+            pred_coords_path = os.path.join(pred_dir, coords_file_name)
+            torch.save(pred_coords, pred_coords_path)
+            sequence_prediction["pred_coords_path"] = pred_coords_path
+
+            # Save pdb
+            pdb_file_name = file_name + ".pdb"
+            pdb_path = os.path.join(pred_dir, pdb_file_name)
+            pdb = convert_outputs_to_pdb(output)
+            with open(pred_coords_path, "w") as f:
+                f.writelines(pdb)
+            sequence_prediction["pdb_file_name"] = pdb_path
+
+
+    with open(os.path.join(args.output_dir, "predictions.txt"), "w") as f:
+        json.dump(sequence_predictions, f, indent=2)
+    
+
+# TODO: handle additional coords dimension from align_sequences_with_res_ids globally
+# TODO: handle coords from align_sequnces_with_res_ids globally
 
 
 
@@ -861,9 +1038,10 @@ if __name__ == "__main__":
     parser.add_argument("--full_sequence_identity_threshold", type=int, default=90)
     parser.add_argument("--motif_length", help="Length of the motif to use for matching", type=int, default=10)
     parser.add_argument("--motif_sequence_identity_threshold", help="Sequence identity threshold for matching. E.g. if motif_length == 10, and sequence_identity_threshold == 90, then a match is found if >= 9/10 residues are identical.", type=int, default=100)
-    parser.add_argument("--num_top_case_studies", type=int, default=100)
+    parser.add_argument("--num_top_case_studies", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=10)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--device", type=int, default=0)
     
     args = parser.parse_args()
 
@@ -888,21 +1066,20 @@ if __name__ == "__main__":
     # find_cath_chain_matches(args, logdir)
     # TODO: Fix find_cath_chain_matches to use old syntax (no coords)
     # filter_matches(args)
-    top_case_studies = select_top_case_studies(args)
-    print(len(top_case_studies))
+    # top_case_studies = select_top_case_studies(args)
+    # print(len(top_case_studies))
 
-    for top_case_study in top_case_studies[-5:]:
-        print("Superfamily:", top_case_study["superfamily"])
-        print("Domain:", top_case_study["domain_name"])
-        print("Overlap residue range:", top_case_study["overlap_residue_range_1"])
-        print("Overlap residue range:", top_case_study["overlap_residue_range_2"])
-        print("Matching domain:", top_case_study["matching_domain_name"])
-        print("Identity:", top_case_study["identity"])
-        print("RMSD:", top_case_study["rmsd"])
+    # for top_case_study in top_case_studies[-5:]:
+    #     print("Superfamily:", top_case_study["superfamily"])
+    #     print("Domain:", top_case_study["domain_name"])
+    #     print("Overlap residue range:", top_case_study["overlap_residue_range_1"])
+    #     print("Overlap residue range:", top_case_study["overlap_residue_range_2"])
+    #     print("Matching domain:", top_case_study["matching_domain_name"])
+    #     print("Identity:", top_case_study["identity"])
+    #     print("RMSD:", top_case_study["rmsd"])
 
-    # inverse_fold_proteinmpnn()
-    # inverse_fold_csdesign()
-    # fold_esmfold()
+    inverse_fold(args)
+    esmfold(args)
     # calc_metrics()
 
 # Example command:
