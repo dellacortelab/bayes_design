@@ -13,6 +13,9 @@ from bayes_design.experiments.cath import parse_cath_file
 import logging
 import bdb
 from functools import lru_cache
+from scipy import stats
+from typing import List, Dict, Tuple
+import pandas as pd
 
 from tqdm import tqdm
 
@@ -25,6 +28,8 @@ import gzip
 import shutil
 import random
 from transformers import AutoTokenizer, EsmForProteinFolding
+from transformers.models.esm.openfold_utils.protein import to_pdb, Protein as OFProtein
+from transformers.models.esm.openfold_utils.feats import atom14_to_atom37
 
 from collections import defaultdict
 from torch.nn import functional as F
@@ -338,9 +343,11 @@ def kabsch_alignment(target_coords, mobile_coords, coords_to_apply=None):
     
     # Step 4: Calculate the covariance matrix
     covariance_matrix = np.dot(mobile_coords_centered.T, target_coords_centered)
-    
-    # Step 5: Perform SVD on the covariance matrix
-    U, S, Vt = np.linalg.svd(covariance_matrix)
+    try:
+        # Step 5: Perform SVD on the covariance matrix
+        U, S, Vt = np.linalg.svd(covariance_matrix)
+    except:
+        breakpoint()
     
     # Step 6: Compute the rotation matrix R
     d = np.linalg.det(np.dot(U, Vt))
@@ -683,9 +690,6 @@ def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_re
     if np.any(distances_2 < 2): # Give a lenient definition of a clash
         print(f"Clash found between {domain_1}, {domain_2}!")
         return True, None
-    
-    # if "5dyi" in domain_1 and "5ifs" in domain_2:
-    #     breakpoint()
 
     # Calculate RMSD
     motif_rmsd = np.sqrt(((aligned_domain_1_coords_motif - aligned_domain_2_coords_motif)**2).sum(axis=-1).mean()).item()
@@ -881,7 +885,7 @@ def inverse_fold(args):
         aligned_seq2 = ''.join(['-' if not fixed else char for char, fixed in zip(aligned_seq2, fixed_position_mask)])
         # Decode order defines the order in which the masked positions are predicted
         decode_order = decode_order_dict["n_to_c"](aligned_seq1)
-        # breakpoint()
+        
         os.makedirs(os.path.join(args.output_dir, "reference_coords"), exist_ok=True)
         coords_1_path = os.path.join(args.output_dir, "reference_coords", domain_1_name + ".pt")
         coords_2_path = os.path.join(args.output_dir, "reference_coords", domain_2_name + ".pt")
@@ -949,8 +953,6 @@ def inverse_fold(args):
         json.dump(results, f, indent=2)
 
 
-from transformers.models.esm.openfold_utils.protein import to_pdb, Protein as OFProtein
-from transformers.models.esm.openfold_utils.feats import atom14_to_atom37
 
 def convert_outputs_to_pdb(outputs):
     final_atom_positions = atom14_to_atom37(outputs["positions"][-1], outputs)
@@ -977,9 +979,9 @@ def convert_outputs_to_pdb(outputs):
 def esmfold(args):
 
     tokenizer = AutoTokenizer.from_pretrained("facebook/esmfold_v1")
-    # model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", low_cpu_mem_usage=True)
-    # model.esm = model.esm.half() # This is okay, it was trained in fp16
-    # model = model.to("cuda:1")
+    model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", low_cpu_mem_usage=True)
+    model.esm = model.esm.half() # This is okay, it was trained in fp16
+    model = model.to("cuda:1")
 
     with open(os.path.join(args.output_dir, "sequence_predictions.txt"), "r") as f:
         sequence_predictions = json.load(f)
@@ -994,18 +996,15 @@ def esmfold(args):
             # # model.trunk.set_chunk_size(64)
             # # Length: 700. Fits on a 24GB VRAM GPU
             # test_protein = "MGAGASAEEKHSRELEKKLKEDAEKDARTVKLLLLGAGESGKSTIVKQMKIIHQDGYSLEECLEFIAIIYGNTLQSILAIVRAMTTLNIQYGDSARQDDARKLMHMADTIEEGTMPKEMSDIIQRLWKDSGIQACFERASEYQLNDSAGYYLSDLERLVTPGYVPTEQDVLRSRVKTTGIIETQFSFKDLNFRMFDVGGQRSERKKWIHCFEGVTCIIFIAALSAYDMVLVEDDEVNRMHESLHLFNSICNHRYFATTSIVLFLNKKDVFFEKIKKAHLSICFPDYDGPNTYEDAGNYIKVQFLELNMRRDVKEIYSHMTCATDTQNVKFVFDAVTDIIIKENLKDCGLFMGAGASAEEKHSRELEKKLKEDAEKDARTVKLLLLGAGESGKSTIVKQMKIIHQDGYSLEECLEFIAIIYGNTLQSILAIVRAMTTLNIQYGDSARQDDARKLMHMADTIEEGTMPKEMSDIIQRLWKDSGIQACFERASEYQLNDSAGYYLSDLERLVTPGYVPTEQDVLRSRVKTTGIIETQFSFKDLNFRMFDVGGQRSERKKWIHCFEGVTCIIFIAALSAYDMVLVEDDEVNRMHESLHLFNSICNHRYFATTSIVLFLNKKDVFFEKIKKAHLSICFPDYDGPNTYEDAGNYIKVQFLELNMRRDVKEIYSHMTCATDTQNVKFVFDAVTDIIIKENLKDCGLF"
-            try:
-                tokenized_input = tokenizer([sequence_prediction["pred_sequence"]], return_tensors="pt", add_special_tokens=False)['input_ids']
-            except:
-                breakpoint()
-            continue
+            
+            tokenized_input = tokenizer([sequence_prediction["pred_sequence"]], return_tensors="pt", add_special_tokens=False)['input_ids']
             tokenized_input = tokenized_input.to("cuda:1")
             
             with torch.no_grad():
                 output = model(tokenized_input)
 
             # Save pred coords
-            pred_coords = output["positions"][-1, 0, :, :4, :]
+            pred_coords = output["positions"][-1, 0, :, :4, :].detach().cpu()
             domain_name_pro, domain_name_anti, model_name = sequence_prediction["domain_name_pro"], sequence_prediction["domain_name_anti"], sequence_prediction["model_name"]
             file_name = f"pro_{domain_name_pro}_anti_{domain_name_anti}_model_{model_name}"
             coords_file_name = file_name + ".pt"
@@ -1017,7 +1016,7 @@ def esmfold(args):
             pdb_file_name = file_name + ".pdb"
             pdb_path = os.path.join(pred_dir, pdb_file_name)
             pdb = convert_outputs_to_pdb(output)
-            with open(pred_coords_path, "w") as f:
+            with open(pdb_path, "w") as f:
                 f.writelines(pdb)
             sequence_prediction["pdb_file_name"] = pdb_path
 
@@ -1026,7 +1025,193 @@ def esmfold(args):
         json.dump(sequence_predictions, f, indent=2)
     
 
-# TODO: handle additional coords dimension from align_sequences_with_res_ids globally
+def compute_rmsd(coords1: torch.Tensor, coords2: torch.Tensor, mask: List[int] = None) -> float:
+    """
+    Compute RMSD between two sets of coordinates.
+    
+    Args:
+        coords1: N x 4 x 3 tensor of coordinates
+        coords2: N x 4 x 3 tensor of coordinates
+        mask: Optional list of 0s and 1s for masking specific positions
+    
+    Returns:
+        float: RMSD value
+    """
+    # Align full proteins on scaffold CA
+    motif_mask = torch.tensor(mask).bool()
+    nan_position_mask = torch.isnan(coords1.sum(-1)) | torch.isnan(coords2.sum(-1))
+    coords1, coords2, motif_mask = coords1[~nan_position_mask], coords2[~nan_position_mask], motif_mask[~nan_position_mask]
+    coords2 = torch.tensor(kabsch_alignment(target_coords=coords1[~motif_mask].numpy(), mobile_coords=coords2[~motif_mask].numpy(), coords_to_apply=coords2.numpy()))
+
+    coords1 = coords1[motif_mask]
+    coords2 = coords2[motif_mask]
+    
+    diff = coords1 - coords2
+    squared_diff = torch.sum(diff * diff, dim=1)
+    rmsd = torch.sqrt(torch.mean(squared_diff)).item()
+    return rmsd
+
+def analyze_predictions(predictions: List[Dict]) -> pd.DataFrame:
+    """
+    Analyze predictions and create a DataFrame with RMSD values.
+    
+    Args:
+        predictions: List of prediction dictionaries
+    
+    Returns:
+        pd.DataFrame: Analysis results
+    """
+    results = []
+    fail_cases = []
+    i = 0
+    for pred in predictions:
+        i += 1
+        coords_path_pro = pred["coords_path_pro"]
+        coords_path_anti = pred["coords_path_anti"]
+        pred_coords_path = pred["pred_coords_path"]
+        motif_mask = pred["motif_mask"]
+        model_name = pred["model_name"]
+        domain_pro = pred["domain_name_pro"]
+        domain_anti = pred["domain_name_anti"]
+        
+        coords_pro = torch.load(coords_path_pro)[:, 1]
+        coords_anti = torch.load(coords_path_anti)[:, 1]
+        pred_coords = torch.load(pred_coords_path)[:, 1] # N x 4 x 3 torch.tensor
+        
+        # Compute RMSDs
+        rmsd_pro = compute_rmsd(pred_coords, coords_pro, motif_mask)
+        rmsd_anti = compute_rmsd(pred_coords, coords_anti, motif_mask)
+        
+        results.append({
+            'model': model_name,
+            'domain_pro': domain_pro,
+            'domain_anti': domain_anti,
+            'rmsd_pro': rmsd_pro,
+            'rmsd_anti': rmsd_anti,
+            'rmsd_diff': rmsd_anti - rmsd_pro  # Positive means prefers pro conformation
+        })
+    
+    fail_descriptions = []
+    for case in fail_cases:
+        domain_anti = case["domain_name_anti"]
+        domain_pro = case["domain_name_pro"]
+        fail_descriptions.append(f"domain_pro {domain_pro} domain_anti {domain_anti}")
+    print("fail cases:", fail_descriptions)
+    print(len(fail_descriptions))
+    return pd.DataFrame(results)
+
+def analyze_conformational_preference(df: pd.DataFrame, model: str) -> Tuple[float, float]:
+    """
+    Analyze whether a model shows statistically significant conformational preference.
+    
+    Args:
+        df: DataFrame with analysis results
+        model: Model name to analyze
+    
+    Returns:
+        Tuple[float, float]: T-statistic and p-value
+    """
+    model_data = df[df['model'] == model]['rmsd_diff']
+    t_stat, p_value = stats.ttest_1samp(model_data, popmean=0)
+    return t_stat, p_value
+
+def compare_models(df: pd.DataFrame) -> Tuple[float, float]:
+    """
+    Compare performance between models.
+    
+    Args:
+        df: DataFrame with analysis results
+    
+    Returns:
+        Tuple[float, float]: T-statistic and p-value
+    """
+    csdesign_data = df[df['model'] == 'cs_design']['rmsd_diff']
+    proteinmpnn_data = df[df['model'] == 'protein_mpnn']['rmsd_diff']
+    
+    t_stat, p_value = stats.ttest_ind(csdesign_data, proteinmpnn_data)
+    return t_stat, p_value
+
+def run_analysis(predictions: List[Dict]) -> Dict:
+    """
+    Run complete statistical analysis.
+    
+    Args:
+        predictions: List of prediction dictionaries
+    
+    Returns:
+        Dict: Analysis results
+    """
+    # Create DataFrame
+    df = analyze_predictions(predictions)
+    
+    # Analyze each model's conformational preference
+    csdesign_t, csdesign_p = analyze_conformational_preference(df, 'cs_design')
+    proteinmpnn_t, proteinmpnn_p = analyze_conformational_preference(df, 'protein_mpnn')
+    
+    # Compare models
+    model_comp_t, model_comp_p = compare_models(df)
+    
+    # Calculate effect sizes
+    csdesign_effect = df[df['model'] == 'cs_design']['rmsd_diff'].mean()
+    proteinmpnn_effect = df[df['model'] == 'protein_mpnn']['rmsd_diff'].mean()
+    
+    return {
+        'CSDesign': {
+            't_statistic': csdesign_t,
+            'p_value': csdesign_p,
+            'effect_size': csdesign_effect
+        },
+        'ProteinMPNN': {
+            't_statistic': proteinmpnn_t,
+            'p_value': proteinmpnn_p,
+            'effect_size': proteinmpnn_effect
+        },
+        'Model_Comparison': {
+            't_statistic': model_comp_t,
+            'p_value': model_comp_p,
+            'effect_size': csdesign_effect - proteinmpnn_effect
+        }
+    }
+
+def print_analysis_results(results: Dict):
+    """
+    Print analysis results in a readable format.
+    
+    Args:
+        results: Dictionary of analysis results
+    """
+    print("Statistical Analysis Results\n")
+    
+    print("CSDesign Conformational Preference:")
+    print(f"t-statistic: {results['CSDesign']['t_statistic']:.3f}")
+    print(f"p-value: {results['CSDesign']['p_value']:.3e}")
+    print(f"Effect size (mean RMSD difference): {results['CSDesign']['effect_size']:.3f} Å\n")
+    
+    print("ProteinMPNN Conformational Preference:")
+    print(f"t-statistic: {results['ProteinMPNN']['t_statistic']:.3f}")
+    print(f"p-value: {results['ProteinMPNN']['p_value']:.3e}")
+    print(f"Effect size (mean RMSD difference): {results['ProteinMPNN']['effect_size']:.3f} Å\n")
+    
+    print("Model Comparison (CSDesign vs ProteinMPNN):")
+    print(f"t-statistic: {results['Model_Comparison']['t_statistic']:.3f}")
+    print(f"p-value: {results['Model_Comparison']['p_value']:.3e}")
+    print(f"Effect size (difference in mean RMSD differences): {results['Model_Comparison']['effect_size']:.3f} Å")
+
+def compute_metrics(args):
+    # Questions: 
+    # For CSDesign, do "pro" designs prefer conformation a over conformation b with statistical significance?
+    # For ProteinMPNN, same question
+    # Does CSDesign or ProteinMPNN outperform the other with statistical significance?
+    # Load your predictions
+    with open(os.path.join(args.output_dir, "predictions.txt"), "r") as f:
+        predictions = json.load(f)
+
+    # Run analysis
+    results = run_analysis(predictions)
+
+    # Print results
+    print_analysis_results(results)
+
 # TODO: handle coords from align_sequnces_with_res_ids globally
 
 
@@ -1078,9 +1263,9 @@ if __name__ == "__main__":
     #     print("Identity:", top_case_study["identity"])
     #     print("RMSD:", top_case_study["rmsd"])
 
-    inverse_fold(args)
-    esmfold(args)
-    # calc_metrics()
+    # inverse_fold(args)
+    # esmfold(args)
+    compute_metrics(args)
 
 # Example command:
 # python -m src.bayes_design.experiments.scrmsd_experiment
