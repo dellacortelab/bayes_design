@@ -881,8 +881,8 @@ def inverse_fold(args):
             if domain_1_res_id is not None and domain_1_res_id >= match["overlap_residue_range_1"][0] and domain_1_res_id <= match["overlap_residue_range_1"][1]:
                 fixed_position_mask[i] = 0
 
-        aligned_seq1 = ''.join(['-' if not fixed else char for char, fixed in zip(aligned_seq1, fixed_position_mask)])
-        aligned_seq2 = ''.join(['-' if not fixed else char for char, fixed in zip(aligned_seq2, fixed_position_mask)])
+        aligned_seq1_masked = ''.join(['-' if not fixed else char for char, fixed in zip(aligned_seq1, fixed_position_mask)])
+        aligned_seq2_masked = ''.join(['-' if not fixed else char for char, fixed in zip(aligned_seq2, fixed_position_mask)])
         # Decode order defines the order in which the masked positions are predicted
         decode_order = decode_order_dict["n_to_c"](aligned_seq1)
         
@@ -892,7 +892,7 @@ def inverse_fold(args):
         torch.save(aligned_coords1, coords_1_path)
         torch.save(aligned_coords2, coords_2_path)
         
-        pred_sequence = decode_algorithm_dict["greedy"](prob_model=cs_design, struct=(aligned_coords1, aligned_coords2), seq=(aligned_seq1, aligned_seq2), decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)[0]
+        pred_sequence = decode_algorithm_dict["greedy"](prob_model=cs_design, struct=(aligned_coords1, aligned_coords2), seq=(aligned_seq1_masked, aligned_seq2_masked), decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)[0]
         pred_sequence = graft_sequence(pred_sequence, aligned_seq1, aligned_seq2)
         results.append({
             "model_name": "cs_design",
@@ -906,7 +906,7 @@ def inverse_fold(args):
             "coords_path_anti": coords_2_path,
         })
         
-        pred_sequence = decode_algorithm_dict["greedy"](prob_model=cs_design, struct=(aligned_coords2, aligned_coords1), seq=(aligned_seq2, aligned_seq1), decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)[0]
+        pred_sequence = decode_algorithm_dict["greedy"](prob_model=cs_design, struct=(aligned_coords2, aligned_coords1), seq=(aligned_seq2_masked, aligned_seq1_masked), decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)[0]
         pred_sequence = graft_sequence(pred_sequence, aligned_seq2, aligned_seq1)
         results.append({
             "model_name": "cs_design",
@@ -920,7 +920,7 @@ def inverse_fold(args):
             "coords_path_anti": coords_1_path,
         })
 
-        pred_sequence = decode_algorithm_dict["greedy"](prob_model=protein_mpnn, struct=aligned_coords1, seq=aligned_seq1, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)
+        pred_sequence = decode_algorithm_dict["greedy"](prob_model=protein_mpnn, struct=aligned_coords1, seq=aligned_seq1_masked, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)
         pred_sequence = graft_sequence(pred_sequence, aligned_seq1, aligned_seq2)
         results.append({
             "model_name": "protein_mpnn",
@@ -934,7 +934,7 @@ def inverse_fold(args):
             "coords_path_anti": coords_2_path,
         })
 
-        pred_sequence = decode_algorithm_dict["greedy"](prob_model=protein_mpnn, struct=aligned_coords2, seq=aligned_seq2, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)
+        pred_sequence = decode_algorithm_dict["greedy"](prob_model=protein_mpnn, struct=aligned_coords2, seq=aligned_seq2_masked, decode_order=decode_order, fixed_position_mask=fixed_position_mask, from_scratch=True)
         pred_sequence = graft_sequence(pred_sequence, aligned_seq2, aligned_seq1)
         results.append({
             "model_name": "protein_mpnn",
@@ -1083,7 +1083,7 @@ def analyze_predictions(predictions: List[Dict]) -> pd.DataFrame:
         rmsd_anti = compute_rmsd(pred_coords, coords_anti, motif_mask)
         
         results.append({
-            'model': model_name,
+            'model_name': model_name,
             'domain_pro': domain_pro,
             'domain_anti': domain_anti,
             'rmsd_pro': rmsd_pro,
@@ -1091,13 +1091,6 @@ def analyze_predictions(predictions: List[Dict]) -> pd.DataFrame:
             'rmsd_diff': rmsd_anti - rmsd_pro  # Positive means prefers pro conformation
         })
     
-    fail_descriptions = []
-    for case in fail_cases:
-        domain_anti = case["domain_name_anti"]
-        domain_pro = case["domain_name_pro"]
-        fail_descriptions.append(f"domain_pro {domain_pro} domain_anti {domain_anti}")
-    print("fail cases:", fail_descriptions)
-    print(len(fail_descriptions))
     return pd.DataFrame(results)
 
 def analyze_conformational_preference(df: pd.DataFrame, model: str) -> Tuple[float, float]:
@@ -1111,7 +1104,7 @@ def analyze_conformational_preference(df: pd.DataFrame, model: str) -> Tuple[flo
     Returns:
         Tuple[float, float]: T-statistic and p-value
     """
-    model_data = df[df['model'] == model]['rmsd_diff']
+    model_data = df[df['model_name'] == model]['rmsd_diff']
     t_stat, p_value = stats.ttest_1samp(model_data, popmean=0)
     return t_stat, p_value
 
@@ -1125,11 +1118,95 @@ def compare_models(df: pd.DataFrame) -> Tuple[float, float]:
     Returns:
         Tuple[float, float]: T-statistic and p-value
     """
-    csdesign_data = df[df['model'] == 'cs_design']['rmsd_diff']
-    proteinmpnn_data = df[df['model'] == 'protein_mpnn']['rmsd_diff']
+    csdesign_data = df[df['model_name'] == 'cs_design']['rmsd_diff']
+    proteinmpnn_data = df[df['model_name'] == 'protein_mpnn']['rmsd_diff']
     
-    t_stat, p_value = stats.ttest_ind(csdesign_data, proteinmpnn_data)
+    # Perform paired t-test on the RMSD differences
+    t_stat, p_value = stats.ttest_rel(
+        csdesign_data, 
+        proteinmpnn_data
+    )
     return t_stat, p_value
+
+
+def dual_conformation_analysis(df):
+    """
+    Compare algorithms' ability to design for both conformations of the same protein.
+    Pairs up predictions where domain_name_pro for one is domain_name_anti for the other.
+    
+    Returns:
+    dict: Statistical analysis of dual conformation performance
+    """
+    # Create dictionary to store paired designs for each algorithm
+    csdesign_pairs = {}
+    proteinmpnn_pairs = {}
+    
+    # Group designs by algorithm
+    csdesign_data = df[df['model_name'] == 'cs_design']
+    proteinmpnn_data = df[df['model_name'] == 'protein_mpnn']
+    
+    # Function to process each algorithm's data
+    def pair_designs(data, pairs_dict):
+        for _, row in data.iterrows():
+            domain_key = tuple(sorted([row['domain_pro'], row['domain_anti']]))
+            if domain_key not in pairs_dict:
+                pairs_dict[domain_key] = {'conf_a': None, 'conf_b': None, 'indices': []}
+            
+            pairs_dict[domain_key]['indices'].append(row.name)
+
+            # Determine which conformation this design represents
+            if pairs_dict[domain_key]['conf_a'] is None:
+                pairs_dict[domain_key]['conf_a'] = row['rmsd_pro']
+            else:
+                pairs_dict[domain_key]['conf_b'] = row['rmsd_pro']
+    
+    # Pair up the designs for each algorithm
+    pair_designs(csdesign_data, csdesign_pairs)
+    pair_designs(proteinmpnn_data, proteinmpnn_pairs)
+
+    df["summed_rmsd"] = None
+    # Update summed_rmsd in dataframe
+    for pairs_dict in [csdesign_pairs, proteinmpnn_pairs]:
+        for domain_key, pair_data in pairs_dict.items():
+            if pair_data['conf_a'] is not None and pair_data['conf_b'] is not None:
+                summed_rmsd = pair_data['conf_a'] + pair_data['conf_b']
+                # Update both entries in the pair with the summed RMSD
+                for idx in pair_data['indices']:
+                    df.at[idx, 'summed_rmsd'] = summed_rmsd
+    
+    # Calculate combined RMSD scores for each algorithm
+    csdesign_combined = []
+    proteinmpnn_combined = []
+    
+    for domain_key in csdesign_pairs.keys():
+        if (csdesign_pairs[domain_key]['conf_a'] is not None and 
+            csdesign_pairs[domain_key]['conf_b'] is not None and
+            domain_key in proteinmpnn_pairs and
+            proteinmpnn_pairs[domain_key]['conf_a'] is not None and
+            proteinmpnn_pairs[domain_key]['conf_b'] is not None):
+            
+            cs_score = (csdesign_pairs[domain_key]['conf_a'] + 
+                        csdesign_pairs[domain_key]['conf_b'])
+            mpnn_score = (proteinmpnn_pairs[domain_key]['conf_a'] + 
+                        proteinmpnn_pairs[domain_key]['conf_b'])
+            
+            csdesign_combined.append(cs_score)
+            proteinmpnn_combined.append(mpnn_score)
+    
+    # Perform paired t-test on combined scores
+    t_stat, p_value = stats.ttest_rel(
+        csdesign_combined,
+        proteinmpnn_combined
+    )
+    
+    return df, {
+        't_statistic': t_stat,
+        'p_value': p_value,
+        'significant': p_value < 0.05,
+        'csdesign_mean_combined': np.mean(csdesign_combined),
+        'proteinmpnn_mean_combined': np.mean(proteinmpnn_combined),
+        'n_pairs': len(csdesign_combined)
+    }
 
 def run_analysis(predictions: List[Dict]) -> Dict:
     """
@@ -1152,8 +1229,11 @@ def run_analysis(predictions: List[Dict]) -> Dict:
     model_comp_t, model_comp_p = compare_models(df)
     
     # Calculate effect sizes
-    csdesign_effect = df[df['model'] == 'cs_design']['rmsd_diff'].mean()
-    proteinmpnn_effect = df[df['model'] == 'protein_mpnn']['rmsd_diff'].mean()
+    csdesign_effect = df[df['model_name'] == 'cs_design']['rmsd_diff'].mean()
+    proteinmpnn_effect = df[df['model_name'] == 'protein_mpnn']['rmsd_diff'].mean()
+
+    df, dual_conformation_result = dual_conformation_analysis(df)
+    notable_cases = find_notable_cases(df)
     
     return {
         'CSDesign': {
@@ -1170,8 +1250,11 @@ def run_analysis(predictions: List[Dict]) -> Dict:
             't_statistic': model_comp_t,
             'p_value': model_comp_p,
             'effect_size': csdesign_effect - proteinmpnn_effect
-        }
+        },
+        'Model_Comparison_Dual_Conformation': dual_conformation_result,
+        **notable_cases
     }
+
 
 def print_analysis_results(results: Dict):
     """
@@ -1197,6 +1280,165 @@ def print_analysis_results(results: Dict):
     print(f"p-value: {results['Model_Comparison']['p_value']:.3e}")
     print(f"Effect size (difference in mean RMSD differences): {results['Model_Comparison']['effect_size']:.3f} Å")
 
+    print("Model Comparison (CSDesign vs ProteinMPNN):")
+    print(f"\nDual Conformation Analysis:")
+    print(f"Number of paired instances: {results['Model_Comparison_Dual_Conformation']['n_pairs']}")
+    print(f"t-statistic: {results['Model_Comparison_Dual_Conformation']['t_statistic']:.4f}")
+    print(f"p-value: {results['Model_Comparison_Dual_Conformation']['p_value']:.4f}")
+    print(f"CSDesign mean combined RMSD: {results['Model_Comparison_Dual_Conformation']['csdesign_mean_combined']:.4f}")
+    print(f"ProteinMPNN mean combined RMSD: {results['Model_Comparison_Dual_Conformation']['proteinmpnn_mean_combined']:.4f}")
+
+def find_notable_cases(df):
+    """
+    Find and return notable cases from the dataset
+    """
+    results = defaultdict(dict)
+    
+    # 1. Best individual design (smallest RMSD_pro)
+    df_protein_mpnn = df[df["model_name"] == "protein_mpnn"]
+    df_cs_design = df[df["model_name"] == "cs_design"]
+
+    best_design_protein_mpnn = df_protein_mpnn.loc[df_protein_mpnn['rmsd_pro'].idxmin()]
+    results["protein_mpnn"]['best_rmsd_pro'] = {
+        'model_name': best_design_protein_mpnn['model_name'],
+        'domain_pro': best_design_protein_mpnn['domain_pro'],
+        'domain_anti': best_design_protein_mpnn['domain_anti'],
+        'rmsd_pro': best_design_protein_mpnn['rmsd_pro']
+    }
+
+    best_design_cs_design = df_cs_design.loc[df_cs_design['rmsd_pro'].idxmin()]
+    results["cs_design"]['best_rmsd_pro'] = {
+        'model_name': best_design_cs_design['model_name'],
+        'domain_pro': best_design_cs_design['domain_pro'],
+        'domain_anti': best_design_cs_design['domain_anti'],
+        'rmsd_pro': best_design_cs_design['rmsd_pro']
+    }
+    
+    # 2. Best preference (largest RMSD_diff)
+    df_cs_design['rmsd_diff'] = df_cs_design['rmsd_anti'] - df_cs_design['rmsd_pro']
+    best_pref_cs_design = df_cs_design.loc[df_cs_design['rmsd_diff'].idxmax()]  # minimum because smaller RMSD_pro is better
+    results["cs_design"]['best_preference'] = {
+        'model_name': best_pref_cs_design['model_name'],
+        'domain_pro': best_pref_cs_design['domain_pro'],
+        'domain_anti': best_pref_cs_design['domain_anti'],
+        'rmsd_diff': best_pref_cs_design['rmsd_diff']
+    }
+
+    df_protein_mpnn['rmsd_diff'] = df_protein_mpnn['rmsd_anti'] - df_protein_mpnn['rmsd_pro']
+    best_pref_protein_mpnn = df_protein_mpnn.loc[df_protein_mpnn['rmsd_diff'].idxmax()]  # minimum because smaller RMSD_pro is better
+    results["protein_mpnn"]['best_preference'] = {
+        'model_name': best_pref_protein_mpnn['model_name'],
+        'domain_pro': best_pref_protein_mpnn['domain_pro'],
+        'domain_anti': best_pref_protein_mpnn['domain_anti'],
+        'rmsd_diff': best_pref_protein_mpnn['rmsd_diff']
+    }
+    
+    # 3. Best overall design (smallest summed RMSD)
+    best_sum_cs_design = df_cs_design.loc[df_cs_design['summed_rmsd'].idxmin()]
+    results["cs_design"]['best_total_rmsd'] = {
+        'model_name': best_sum_cs_design['model_name'],
+        'domain_pro': best_sum_cs_design['domain_pro'],
+        'domain_anti': best_sum_cs_design['domain_anti'],
+        'summed_rmsd': best_sum_cs_design['summed_rmsd']
+    }
+    best_sum_protein_mpnn = df_protein_mpnn.loc[df_protein_mpnn['summed_rmsd'].idxmin()]
+    results["protein_mpnn"]['best_total_rmsd'] = {
+        'model_name': best_sum_protein_mpnn['model_name'],
+        'domain_pro': best_sum_protein_mpnn['domain_pro'],
+        'domain_anti': best_sum_protein_mpnn['domain_anti'],
+        'summed_rmsd': best_sum_protein_mpnn['summed_rmsd']
+    }
+    
+    # 4. Largest difference between algorithms
+    # First, create a DataFrame with paired designs
+    
+    paired_data = []
+    for pro_domain in df['domain_pro'].unique():
+        cs_design = df[(df['domain_pro'] == pro_domain) & 
+                           (df['model_name'] == 'cs_design')]
+        prot_mpnn = df[(df['domain_pro'] == pro_domain) & 
+                           (df['model_name'] == 'protein_mpnn')]
+        
+        if not cs_design.empty and not prot_mpnn.empty:
+            cs_diff = cs_design['rmsd_diff'].iloc[0]
+            mpnn_diff = prot_mpnn['rmsd_diff'].iloc[0]
+            algo_diff = cs_diff - mpnn_diff # Higher numbers favor cs_design
+
+            cs_summed_rmsd = cs_design["summed_rmsd"].iloc[0]
+            prot_summed_rmsd = prot_mpnn["summed_rmsd"].iloc[0]
+            summed_rmsd_diff = prot_summed_rmsd - cs_summed_rmsd # Higher numbers favor cs_design
+            
+            paired_data.append({
+                'domain_pro': pro_domain,
+                'domain_anti_cs': cs_design['domain_anti'].iloc[0],
+                'domain_anti_mpnn': prot_mpnn['domain_anti'].iloc[0],
+                'diff_between_algorithm_anti_pro_diffs': algo_diff,
+                'cs_diff': cs_diff,
+                'mpnn_diff': mpnn_diff,
+                'diff_between_algorithm_summed_diffs': summed_rmsd_diff,
+                'cs_design_summed_rmsd': cs_summed_rmsd,
+                'protein_mpnn_summed_rmsd': prot_summed_rmsd,
+            })
+    
+    paired_df = pd.DataFrame(paired_data)
+    if not paired_df.empty:
+        largest_algo_diff = paired_df.loc[paired_df['diff_between_algorithm_anti_pro_diffs'].idxmax()]
+        results['cs_design']['largest_algorithm_difference'] = largest_algo_diff.to_dict()
+        largest_algo_diff = paired_df.loc[paired_df['diff_between_algorithm_anti_pro_diffs'].idxmin()]
+        results['protein_mpnn']['largest_algorithm_difference'] = largest_algo_diff.to_dict()
+        
+        largest_algo_diff = paired_df.loc[paired_df['diff_between_algorithm_summed_diffs'].idxmax()]
+        results['cs_design']['largest_algorithm_summed_difference'] = largest_algo_diff.to_dict()
+        largest_algo_diff = paired_df.loc[paired_df['diff_between_algorithm_summed_diffs'].idxmin()]
+        results['protein_mpnn']['largest_algorithm_summed_difference'] = largest_algo_diff.to_dict()
+    
+    return results
+
+def print_notable_cases(notable_cases):
+    """
+    Print notable cases in a readable format
+    """
+    
+    for model_name in ["cs_design", "protein_mpnn"]:
+        cases = notable_cases[model_name]
+        print("\nNotable Cases:")
+        print("\n1. Best Individual Design (Smallest RMSD_pro):")
+        print(f"Model: {cases['best_rmsd_pro']['model_name']}")
+        print(f"Domain Pro: {cases['best_rmsd_pro']['domain_pro']}")
+        print(f"Domain Anti: {cases['best_rmsd_pro']['domain_anti']}")
+        print(f"RMSD Pro: {cases['best_rmsd_pro']['rmsd_pro']:.3f}")
+        
+        print("\n2. Best Preference (Largest RMSD difference):")
+        print(f"Model: {cases['best_preference']['model_name']}")
+        print(f"Domain Pro: {cases['best_preference']['domain_pro']}")
+        print(f"Domain Anti: {cases['best_preference']['domain_anti']}")
+        print(f"RMSD Difference: {cases['best_preference']['rmsd_diff']:.3f}")
+        
+        print("\n3. Best Overall Design (Smallest summed RMSD):")
+        print(f"Model: {cases['best_total_rmsd']['model_name']}")
+        print(f"Domain Pro: {cases['best_total_rmsd']['domain_pro']}")
+        print(f"Domain Anti: {cases['best_total_rmsd']['domain_anti']}")
+        print(f"Total RMSD: {cases['best_total_rmsd']['summed_rmsd']:.3f}")
+        
+        print("\n4. Largest Algorithm Difference:")
+        algo_diff = cases['largest_algorithm_difference']
+        print(f"Domain Pro: {algo_diff['domain_pro']}")
+        print(f"CSDesign Domain Anti: {algo_diff['domain_anti_cs']}")
+        print(f"ProteinMPNN Domain Anti: {algo_diff['domain_anti_mpnn']}")
+        print(f"CSDesign RMSD Difference: {algo_diff['cs_diff']:.3f}")
+        print(f"ProteinMPNN RMSD Difference: {algo_diff['mpnn_diff']:.3f}")
+        print(f"Absolute Difference between Algorithms: {algo_diff['diff_between_algorithm_summed_diffs']:.3f}")
+
+
+        print("\n4. Largest Algorithm Difference:")
+        algo_diff = cases['largest_algorithm_summed_difference']
+        print(f"Domain Pro: {algo_diff['domain_pro']}")
+        print(f"CSDesign Domain Anti: {algo_diff['domain_anti_cs']}")
+        print(f"ProteinMPNN Domain Anti: {algo_diff['domain_anti_mpnn']}")
+        print(f"CSDesign Summed RMSD: {algo_diff['cs_design_summed_rmsd']:.3f}")
+        print(f"ProteinMPNN Summed RMSD: {algo_diff['protein_mpnn_summed_rmsd']:.3f}")
+        print(f"Absolute Difference between Algorithms: {algo_diff['diff_between_algorithm_summed_diffs']:.3f}")
+
 def compute_metrics(args):
     # Questions: 
     # For CSDesign, do "pro" designs prefer conformation a over conformation b with statistical significance?
@@ -1209,8 +1451,10 @@ def compute_metrics(args):
     # Run analysis
     results = run_analysis(predictions)
 
+
     # Print results
     print_analysis_results(results)
+    print_notable_cases(results)
 
 # TODO: handle coords from align_sequnces_with_res_ids globally
 
@@ -1233,6 +1477,7 @@ if __name__ == "__main__":
     # Set random seed to avoid selecting different pairs for comparison each time.
     np.random.seed(0)
     random.seed(0)
+    torch.manual_seed(0)
 
     from datetime import datetime
     now = datetime.now()
@@ -1263,9 +1508,9 @@ if __name__ == "__main__":
     #     print("Identity:", top_case_study["identity"])
     #     print("RMSD:", top_case_study["rmsd"])
 
-    # inverse_fold(args)
-    # esmfold(args)
-    compute_metrics(args)
+    inverse_fold(args)
+    esmfold(args)
+    # compute_metrics(args)
 
 # Example command:
 # python -m src.bayes_design.experiments.scrmsd_experiment
