@@ -71,7 +71,7 @@ def sequence_to_pdb(sequence, coords, output_path):
 
 def get_scaffold_positions(motif_mask, coords_1, coords_2):
     """Get positions that are part of the scaffold (not motif and not gaps)."""
-    positions = [i for i, (mask, coord_1, coord_2) in enumerate(zip(motif_mask, coords_1, coords_2)) 
+    positions = [i+1 for i, (mask, coord_1, coord_2) in enumerate(zip(motif_mask, coords_1, coords_2)) 
                 if not torch.isnan(coord_1.sum(-1).sum(-1)) and not torch.isnan(coord_2.sum(-1).sum(-1)) and not mask]
     logger.info(f"Found {len(positions)} non-nan scaffold positions")
     return positions
@@ -80,7 +80,6 @@ def get_residue_mapping(ref_struct, mobile_struct, scaffold_positions):
     """Create mapping between residue positions in two structures."""
     ref_res_map = {}
     mobile_res_map = {}
-    breakpoint()
     # Map residue numbers to scaffold positions
     for model in ref_struct:
         for chain in model:
@@ -289,8 +288,6 @@ def process_study_2(results, study_info, output_dir):
     pred_coords_pro = torch.load(result_1["pred_coords_path"])
     pred_coords_anti = torch.load(result_2["pred_coords_path"])
     
-    # if study_info["name"] == "best_overall_mpnn":
-    #     breakpoint()
     logger.info("Coordinate shapes:")
     logger.info(f"Pro: {pro_coords.shape}")
     logger.info(f"Anti: {anti_coords.shape}")
@@ -313,7 +310,6 @@ def process_study_2(results, study_info, output_dir):
     
     # Get scaffold positions
     scaffold_positions = get_scaffold_positions(result_1["motif_mask"], pro_coords, anti_coords)
-    breakpoint()
     
     # Align structures
     aligned_anti = os.path.join(output_dir, "aligned_anti.pdb")
