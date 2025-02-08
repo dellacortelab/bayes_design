@@ -8,9 +8,9 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 def sequence_to_pdb(sequence, coords, output_path):
-    """Convert sequence and coordinates to PDB format with full backbone atoms.
+    """Convert sequence and coordinates to PDB format with full backbone atoms and SEQRES records.
+    SEQRES includes all residues, while ATOM records are only written for residues with coordinates.
     
     Args:
         sequence: String of amino acid one-letter codes
@@ -24,20 +24,44 @@ def sequence_to_pdb(sequence, coords, output_path):
     backbone_atoms = ['N', 'CA', 'C', 'O']
     element_symbols = ['N', 'C', 'C', 'O']
     
+    # Define amino acid 3-letter codes for SEQRES
+    aa_codes = {
+        'A': 'ALA', 'C': 'CYS', 'D': 'ASP', 'E': 'GLU', 'F': 'PHE',
+        'G': 'GLY', 'H': 'HIS', 'I': 'ILE', 'K': 'LYS', 'L': 'LEU',
+        'M': 'MET', 'N': 'ASN', 'P': 'PRO', 'Q': 'GLN', 'R': 'ARG',
+        'S': 'SER', 'T': 'THR', 'V': 'VAL', 'W': 'TRP', 'Y': 'TYR'
+    }
+    
     with open(output_path, 'w') as f:
+        # Write SEQRES records for complete sequence (13 residues per line)
+        residues_per_line = 13
+        num_seqres_lines = (len(sequence) + residues_per_line - 1) // residues_per_line
+        
+        for i in range(num_seqres_lines):
+            start_idx = i * residues_per_line
+            end_idx = min(start_idx + residues_per_line, len(sequence))
+            residues = sequence[start_idx:end_idx]
+            
+            # Convert to 3-letter codes and join with spaces
+            res_line = ' '.join(aa_codes[res] for res in residues)
+            
+            # Write SEQRES line with proper formatting
+            f.write(f"SEQRES  {i+1:2d} A {len(sequence):4d}  {res_line:<39s}\n")
+        
         atom_num = 1
         res_num = 1
         
+        # Write ATOM records only for residues with coordinates
         for i, (res, pos) in enumerate(zip(sequence, coords)):
-            # Skip gaps and missing coordinates
-            if res == '-' or (isinstance(pos[0, 0], float) and np.isnan(pos[0, 0])):
-                logger.debug(f"Skipping position {i}: res={res}, pos={pos}")
+            # Skip residues with missing coordinates
+            if torch.isnan(pos.sum()):
+                res_num += 1
                 continue
                 
-            # Write all backbone atoms for each residue
+            # Write all backbone atoms for residue
             for atom_idx, (atom_name, element) in enumerate(zip(backbone_atoms, element_symbols)):
                 x, y, z = pos[atom_idx]
-                f.write(f"ATOM  {atom_num:5d}  {atom_name:<3} {res:3} A{res_num:4d}    "
+                f.write(f"ATOM  {atom_num:5d}  {atom_name:<3} {aa_codes[res]:3} A{res_num:4d}    "
                        f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00           {element}  \n")
                 atom_num += 1
             res_num += 1
@@ -45,18 +69,18 @@ def sequence_to_pdb(sequence, coords, output_path):
         f.write("TER\n")
         f.write("END\n")
 
-def get_scaffold_positions(sequence, motif_mask):
+def get_scaffold_positions(motif_mask, coords_1, coords_2):
     """Get positions that are part of the scaffold (not motif and not gaps)."""
-    positions = [i for i, (res, mask) in enumerate(zip(sequence, motif_mask)) 
-                if res != '-' and not mask]
-    logger.info(f"Found {len(positions)} scaffold positions")
+    positions = [i for i, (mask, coord_1, coord_2) in enumerate(zip(motif_mask, coords_1, coords_2)) 
+                if not torch.isnan(coord_1.sum(-1).sum(-1)) and not torch.isnan(coord_2.sum(-1).sum(-1)) and not mask]
+    logger.info(f"Found {len(positions)} non-nan scaffold positions")
     return positions
 
 def get_residue_mapping(ref_struct, mobile_struct, scaffold_positions):
     """Create mapping between residue positions in two structures."""
     ref_res_map = {}
     mobile_res_map = {}
-    
+    breakpoint()
     # Map residue numbers to scaffold positions
     for model in ref_struct:
         for chain in model:
@@ -198,12 +222,17 @@ def process_study(results, study_info, output_dir):
     logger.info(f"Pred: {pred_coords.shape}")
     
     # Convert to PDB
-    sequence_to_pdb(result["sequence_pro"], pro_coords, pro_pdb)
-    sequence_to_pdb(result["sequence_anti"], anti_coords, anti_pdb)
+    merged_seq_pro = merge_seq(result["sequence_pro"], result["sequence_anti"])
+    merged_seq_anti = merge_seq(result["sequence_anti"], result["sequence_pro"])
+    sequence_to_pdb(merged_seq_pro, pro_coords, pro_pdb)
+    sequence_to_pdb(merged_seq_anti, anti_coords, anti_pdb)
     sequence_to_pdb(result["pred_sequence"], pred_coords, pred_pdb)
     
     # Get scaffold positions
-    scaffold_positions = get_scaffold_positions(result["sequence_pro"], result["motif_mask"])
+    scaffold_positions = get_scaffold_positions(result["motif_mask"], pro_coords, anti_coords)
+    motif_start_idx = result["motif_mask"].index(1)
+    motif_end_idx = len(result["motif_mask"]) - result["motif_mask"][-1::-1].index(1) - 1
+    logger.info(f"Motif start idx: {motif_start_idx + 1}, Motif end idx: {motif_end_idx + 1}")
     
     # Align structures
     aligned_anti = os.path.join(output_dir, "aligned_anti.pdb")
@@ -223,6 +252,9 @@ def process_study(results, study_info, output_dir):
 
     # # Run ChimeraX with absolute path
     # subprocess.run(["chimerax", script_path])
+
+def merge_seq(seq_1, seq_2):
+    return "".join([char_1 if char_1 != "-" else char_2 for char_1, char_2 in zip(seq_1, seq_2)])
 
 def process_study_2(results, study_info, output_dir):
     """Process a single study and create visualization."""
@@ -257,20 +289,31 @@ def process_study_2(results, study_info, output_dir):
     pred_coords_pro = torch.load(result_1["pred_coords_path"])
     pred_coords_anti = torch.load(result_2["pred_coords_path"])
     
+    # if study_info["name"] == "best_overall_mpnn":
+    #     breakpoint()
     logger.info("Coordinate shapes:")
     logger.info(f"Pro: {pro_coords.shape}")
     logger.info(f"Anti: {anti_coords.shape}")
     logger.info(f"Pred: {pred_coords_pro.shape}")
     logger.info(f"Pred: {pred_coords_anti.shape}")
+    motif_start_idx = result_1["motif_mask"].index(1)
+    motif_end_idx = len(result_1["motif_mask"]) - result_1["motif_mask"][-1::-1].index(1) - 1
+    logger.info(f"Motif start idx: {motif_start_idx + 1}, Motif end idx: {motif_end_idx + 1}")
+    motif_start_idx = result_2["motif_mask"].index(1)
+    motif_end_idx = len(result_2["motif_mask"]) - result_2["motif_mask"][-1::-1].index(1) - 1
+    logger.info(f"Motif start idx: {motif_start_idx + 1}, Motif end idx: {motif_end_idx + 1}")
     
     # Convert to PDB
-    sequence_to_pdb(result_1["sequence_pro"], pro_coords, pro_pdb)
-    sequence_to_pdb(result_1["sequence_anti"], anti_coords, anti_pdb)
+    merged_seq_pro = merge_seq(result_1["sequence_pro"], result_1["sequence_anti"])
+    merged_seq_anti = merge_seq(result_1["sequence_anti"], result_1["sequence_pro"])
+    sequence_to_pdb(merged_seq_pro, pro_coords, pro_pdb)
+    sequence_to_pdb(merged_seq_anti, anti_coords, anti_pdb)
     sequence_to_pdb(result_1["pred_sequence"], pred_coords_pro, pred_pdb_pro)
     sequence_to_pdb(result_2["pred_sequence"], pred_coords_anti, pred_pdb_anti)
     
     # Get scaffold positions
-    scaffold_positions = get_scaffold_positions(result_1["sequence_pro"], result_1["motif_mask"])
+    scaffold_positions = get_scaffold_positions(result_1["motif_mask"], pro_coords, anti_coords)
+    breakpoint()
     
     # Align structures
     aligned_anti = os.path.join(output_dir, "aligned_anti.pdb")
@@ -294,26 +337,6 @@ def process_study_2(results, study_info, output_dir):
     # # Run ChimeraX with absolute path
     # subprocess.run(["chimerax", script_path])
 
-def process_algorithm_comparison(results, study_info, output_dir):
-    """Process algorithm comparison studies."""
-    logger.info(f"\nProcessing algorithm comparison: {study_info['name']}")
-    os.makedirs(output_dir, exist_ok=True)
-    
-    for model in ["cs_design", "protein_mpnn"]:
-        result = next(r for r in results 
-                     if r["model_name"] == model and 
-                     r["domain_name_pro"] == study_info["domain_pro"] and
-                     r["domain_name_anti"] == study_info[f"{model}_domain_anti"])
-        
-        model_dir = os.path.join(output_dir, model)
-        os.makedirs(model_dir, exist_ok=True)
-        
-        process_study(results, {
-            "name": f"{study_info['name']}_{model}",
-            "model": model,
-            "domain_pro": study_info["domain_pro"],
-            "domain_anti": study_info[f"{model}_domain_anti"]
-        }, model_dir)
 
 # Example usage remains the same...
 
@@ -331,14 +354,14 @@ def main(args):
         {
             "name": "best_individual_cs",
             "model": "cs_design",
-            "domain_pro": "2x7rB00",
-            "domain_anti": "3cp1A00"
+            "domain_pro": "4mbpA01",
+            "domain_anti": "1ezpA02"
         },
         {
             "name": "best_individual_protein_mpnn",
             "model": "protein_mpnn",
-            "domain_pro": "2x7rB00",
-            "domain_anti": "3cp1A00"
+            "domain_pro": "4mbpA01",
+            "domain_anti": "1ezpA02"
         },
     ]
 
@@ -346,53 +369,75 @@ def main(args):
         {
             "name": "best_overall_cs",
             "model": "cs_design",
-            "domain_pro": "1akjB00",
-            "domain_anti": "5csbA00"
+            "domain_pro": "2odhA01",
+            "domain_anti": "3imbB01"
         },
         {
             "name": "best_overall_mpnn",
             "model": "protein_mpnn",
-            "domain_pro": "2odhA01",
-            "domain_anti": "3imbB01"
+            "domain_pro": "3uoaC02",
+            "domain_anti": "6f7iB02"
         },
     ]
     
-    algorithm_comparisons = [
+    algorithm_comparisons_rmsd_diff = [
         {
-            "name": "largest_algorithm_diff_cs_design",
-            "domain_pro": "2axzA02",
-            "cs_design_domain_anti": "2awiD02",
-            "protein_mpnn_domain_anti": "2awiD02"
+            "name": "largest_algorithm_preference_diff_cs_design",
+            "domain_pro": "5mw1B02",
+            "domain_anti": "4cj7B02",
         },
         {
-            "name": "largest_algorithm_diff_protein_mpnn",
-            "domain_pro": "4jkaB01",
-            "cs_design_domain_anti": "4jkfA01",
-            "protein_mpnn_domain_anti": "4jkfA01"
+            "name": "largest_algorithm_preference_diff_protein_mpnn",
+            "domain_pro": "4cj7B02",
+            "domain_anti": "5mw1B02",
+        },
+    ]
+
+    algorithm_comparisons_summed_rmsd = [
+        {
+            "name": "largest_algorithm_diff_summed_rmsd_cs_design",
+            "domain_pro": "4hitD00",
+            "domain_anti": "3f1jA00",
+        },
+        {
+            "name": "largest_algorithm_diff_summed_rmsd_protein_mpnn",
+            "domain_pro": "1x9tA02",
+            "domain_anti": "1x9pA02",
         },
     ]
     
     base_output_dir = "visualization_output"
     
-    # Process individual studies
+    # Process individual studies -> keep
     # for study in studies:
-    #     study_dir = os.path.join(base_output_dir, study["name"])
+    #     study_dir = os.path.join(args.output_dir, base_output_dir, study["name"])
     #     process_study(results, study, study_dir)
 
-    for study in studies_2:
-        study_dir = os.path.join(base_output_dir, study["name"])
+    for study in studies_2[1:]: # -> keep
+        study_dir = os.path.join(args.output_dir, base_output_dir, study["name"])
         process_study_2(results, study, study_dir)
 
-    
-    # Process algorithm comparisons
-    for comparison in algorithm_comparisons:
-        comparison_dir = os.path.join(base_output_dir, comparison["name"])
-        process_algorithm_comparison(results, comparison, comparison_dir)
+    # # Process algorithm comparisons -> keep
+    # for study in algorithm_comparisons_rmsd_diff:
+    #     study_dir = os.path.join(args.output_dir, base_output_dir, study["name"])
+    #     for model in ["cs_design", "protein_mpnn"]:            
+    #         model_dir = os.path.join(study_dir, model)            
+    #         study["name"] += f"_{model}"
+    #         study["model"] = model
+    #         process_study(results, study, model_dir)
+
+    # # Process algorithm comparisons
+    # for study in algorithm_comparisons_summed_rmsd:
+    #     study_dir = os.path.join(base_output_dir, study["name"])
+    #     for model in ["cs_design", "protein_mpnn"]:            
+    #         model_dir = os.path.join(study_dir, model)            
+    #         study["name"] += f"_{model}"
+    #         study["model"] = model
+    #         process_study_2(results, study, model_dir)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_dir", type=str, default="/home/jastern33/code/bayes_design_data")
     parser.add_argument("--output_dir", type=str, default="/home/jastern33/code/bayes_design_data")
     args = parser.parse_args()
     main(args)

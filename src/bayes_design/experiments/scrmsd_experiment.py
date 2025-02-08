@@ -627,13 +627,13 @@ def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_re
         # Return early if motif is within 5 positions of n terminus, c terminus, or a missing residue
         n_terminus_res_id = [res_id for res_id in aligned_res_ids if res_id is not None][0]
         distance_to_n_terminus = overlap_residue_range[0] - n_terminus_res_id
-        if distance_to_n_terminus <= 5:
+        if distance_to_n_terminus <= 15:
             print("CLOSE TO N")
             return True
         # Check proximity to c terminus
         c_terminus_res_id = [res_id for res_id in aligned_res_ids if res_id is not None][-1]
         distance_to_c_terminus = c_terminus_res_id - overlap_residue_range[1]
-        if distance_to_c_terminus <= 5:
+        if distance_to_c_terminus <= 15:
             print("CLOSE TO C")
             return True
         # Check proximity to missing residue
@@ -642,7 +642,7 @@ def check_clash(dataset, domain_1, domain_2, overlap_residue_range_1, overlap_re
         for overlap_idx in overlap_indices:
             for none_idx in none_indices:
                 distance = abs(overlap_idx - none_idx)
-                if distance <= 5:
+                if distance <= 10:
                     print("CLOSE TO NONE")
                     return True
                 
@@ -1495,8 +1495,8 @@ if __name__ == "__main__":
 
     # find_cath_chain_matches(args, logdir)
     # TODO: Fix find_cath_chain_matches to use old syntax (no coords)
-    # filter_matches(args)
-    # top_case_studies = select_top_case_studies(args)
+    filter_matches(args)
+    top_case_studies = select_top_case_studies(args)
     # print(len(top_case_studies))
 
     # for top_case_study in top_case_studies[-5:]:
@@ -1510,7 +1510,7 @@ if __name__ == "__main__":
 
     inverse_fold(args)
     esmfold(args)
-    # compute_metrics(args)
+    compute_metrics(args)
 
 # Example command:
 # python -m src.bayes_design.experiments.scrmsd_experiment
