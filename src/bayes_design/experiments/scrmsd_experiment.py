@@ -1314,6 +1314,7 @@ def find_notable_cases(df):
         'rmsd_pro': best_design_cs_design['rmsd_pro']
     }
     
+
     # 2. Best preference (largest RMSD_diff)
     df_cs_design['rmsd_diff'] = df_cs_design['rmsd_anti'] - df_cs_design['rmsd_pro']
     best_pref_cs_design = df_cs_design.loc[df_cs_design['rmsd_diff'].idxmax()]  # minimum because smaller RMSD_pro is better
@@ -1387,10 +1388,13 @@ def find_notable_cases(df):
         largest_algo_diff = paired_df.loc[paired_df['diff_between_algorithm_anti_pro_diffs'].idxmin()]
         results['protein_mpnn']['largest_algorithm_difference'] = largest_algo_diff.to_dict()
         
-        largest_algo_diff = paired_df.loc[paired_df['diff_between_algorithm_summed_diffs'].idxmax()]
+        # Subset such that at least one is accurate
+        pair_df_subset = paired_df[(paired_df["cs_design_summed_rmsd"] < 10) | (paired_df["protein_mpnn_summed_rmsd"] < 10)]
+        largest_algo_diff = pair_df_subset.loc[pair_df_subset['diff_between_algorithm_summed_diffs'].idxmax()]
         results['cs_design']['largest_algorithm_summed_difference'] = largest_algo_diff.to_dict()
-        largest_algo_diff = paired_df.loc[paired_df['diff_between_algorithm_summed_diffs'].idxmin()]
+        largest_algo_diff = pair_df_subset.loc[pair_df_subset['diff_between_algorithm_summed_diffs'].idxmin()]
         results['protein_mpnn']['largest_algorithm_summed_difference'] = largest_algo_diff.to_dict()
+        # breakpoint()
     
     return results
 
@@ -1407,6 +1411,7 @@ def print_notable_cases(notable_cases):
         print(f"Domain Pro: {cases['best_rmsd_pro']['domain_pro']}")
         print(f"Domain Anti: {cases['best_rmsd_pro']['domain_anti']}")
         print(f"RMSD Pro: {cases['best_rmsd_pro']['rmsd_pro']:.3f}")
+
         
         print("\n2. Best Preference (Largest RMSD difference):")
         print(f"Model: {cases['best_preference']['model_name']}")
@@ -1427,7 +1432,7 @@ def print_notable_cases(notable_cases):
         print(f"ProteinMPNN Domain Anti: {algo_diff['domain_anti_mpnn']}")
         print(f"CSDesign RMSD Difference: {algo_diff['cs_diff']:.3f}")
         print(f"ProteinMPNN RMSD Difference: {algo_diff['mpnn_diff']:.3f}")
-        print(f"Absolute Difference between Algorithms: {algo_diff['diff_between_algorithm_summed_diffs']:.3f}")
+        print(f"CSDesign Pro RMSD - ProteinMPNN Pro RMSD: {algo_diff['diff_between_algorithm_anti_pro_diffs']:.3f}")
 
 
         print("\n4. Largest Algorithm Difference:")
@@ -1437,7 +1442,7 @@ def print_notable_cases(notable_cases):
         print(f"ProteinMPNN Domain Anti: {algo_diff['domain_anti_mpnn']}")
         print(f"CSDesign Summed RMSD: {algo_diff['cs_design_summed_rmsd']:.3f}")
         print(f"ProteinMPNN Summed RMSD: {algo_diff['protein_mpnn_summed_rmsd']:.3f}")
-        print(f"Absolute Difference between Algorithms: {algo_diff['diff_between_algorithm_summed_diffs']:.3f}")
+        print(f"Difference between summed diffs: {algo_diff['diff_between_algorithm_summed_diffs']:.3f}")
 
 def compute_metrics(args):
     # Questions: 
@@ -1495,8 +1500,8 @@ if __name__ == "__main__":
 
     # find_cath_chain_matches(args, logdir)
     # TODO: Fix find_cath_chain_matches to use old syntax (no coords)
-    filter_matches(args)
-    top_case_studies = select_top_case_studies(args)
+    # filter_matches(args)
+    # top_case_studies = select_top_case_studies(args)
     # print(len(top_case_studies))
 
     # for top_case_study in top_case_studies[-5:]:
@@ -1508,8 +1513,8 @@ if __name__ == "__main__":
     #     print("Identity:", top_case_study["identity"])
     #     print("RMSD:", top_case_study["rmsd"])
 
-    inverse_fold(args)
-    esmfold(args)
+    # inverse_fold(args)
+    # esmfold(args)
     compute_metrics(args)
 
 # Example command:
