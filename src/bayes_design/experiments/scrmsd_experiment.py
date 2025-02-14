@@ -518,9 +518,10 @@ def find_cath_chain_matches(args, logdir, n_comparisons_per_domain=20, n_regions
                             other_chain = other_structure[0][other_domain.domain_name[4]]
                             other_coords, other_seq, other_res_ids = dataset.extract_seq_and_res_ids(other_chain)
 
-                            aligned_res_ids1, aligned_res_ids2, aligned_seq1, aligned_seq2 = \
+                            aligned_res_ids1, aligned_res_ids2, aligned_seq1, aligned_seq2, aligned_coords1, aligned_coords2 = \
                                 align_sequences_with_res_ids(domain_seq, torch.tensor(domain_res_ids),
-                                                            other_seq, torch.tensor(other_res_ids))
+                                                            other_seq, torch.tensor(other_res_ids),
+                                                            coords1=domain_coords, coords2=other_coords)
 
                             # Condition 1: sequence must have identiy >= full_sequence_identity_threshold
                             full_seq_identity, beg, end = compute_full_sequence_identity(aligned_seq1, aligned_seq2)
@@ -981,7 +982,7 @@ def esmfold(args):
     tokenizer = AutoTokenizer.from_pretrained("facebook/esmfold_v1")
     model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", low_cpu_mem_usage=True)
     model.esm = model.esm.half() # This is okay, it was trained in fp16
-    model = model.to("cuda:1")
+    model = model.cuda()
 
     with open(os.path.join(args.output_dir, "sequence_predictions.txt"), "r") as f:
         sequence_predictions = json.load(f)
@@ -1236,17 +1237,17 @@ def run_analysis(predictions: List[Dict]) -> Dict:
     notable_cases = find_notable_cases(df)
     
     return {
-        'CSDesign': {
+        'CSDesign': { # CSDesign conformational preference test
             't_statistic': csdesign_t,
             'p_value': csdesign_p,
             'effect_size': csdesign_effect
         },
-        'ProteinMPNN': {
+        'ProteinMPNN': { # ProteinMPNN conformational preference test
             't_statistic': proteinmpnn_t,
             'p_value': proteinmpnn_p,
             'effect_size': proteinmpnn_effect
         },
-        'Model_Comparison': {
+        'Model_Comparison': { # CSDesign / ProteinMPNN conformational preference comparison
             't_statistic': model_comp_t,
             'p_value': model_comp_p,
             'effect_size': csdesign_effect - proteinmpnn_effect
@@ -1287,6 +1288,8 @@ def print_analysis_results(results: Dict):
     print(f"p-value: {results['Model_Comparison_Dual_Conformation']['p_value']:.4f}")
     print(f"CSDesign mean combined RMSD: {results['Model_Comparison_Dual_Conformation']['csdesign_mean_combined']:.4f}")
     print(f"ProteinMPNN mean combined RMSD: {results['Model_Comparison_Dual_Conformation']['proteinmpnn_mean_combined']:.4f}")
+
+    print(results["stats"])
 
 def find_notable_cases(df):
     """
@@ -1498,23 +1501,21 @@ if __name__ == "__main__":
         format='%(asctime)s - %(levelname)s - %(message)s'  # Log format
     )
 
-    # find_cath_chain_matches(args, logdir)
-    # TODO: Fix find_cath_chain_matches to use old syntax (no coords)
-    # filter_matches(args)
-    # top_case_studies = select_top_case_studies(args)
-    # print(len(top_case_studies))
+    find_cath_chain_matches(args, logdir)
+    filter_matches(args)
+    top_case_studies = select_top_case_studies(args)
 
-    # for top_case_study in top_case_studies[-5:]:
-    #     print("Superfamily:", top_case_study["superfamily"])
-    #     print("Domain:", top_case_study["domain_name"])
-    #     print("Overlap residue range:", top_case_study["overlap_residue_range_1"])
-    #     print("Overlap residue range:", top_case_study["overlap_residue_range_2"])
-    #     print("Matching domain:", top_case_study["matching_domain_name"])
-    #     print("Identity:", top_case_study["identity"])
-    #     print("RMSD:", top_case_study["rmsd"])
+    for top_case_study in top_case_studies[-5:]:
+        print("Superfamily:", top_case_study["superfamily"])
+        print("Domain:", top_case_study["domain_name"])
+        print("Overlap residue range:", top_case_study["overlap_residue_range_1"])
+        print("Overlap residue range:", top_case_study["overlap_residue_range_2"])
+        print("Matching domain:", top_case_study["matching_domain_name"])
+        print("Identity:", top_case_study["identity"])
+        print("RMSD:", top_case_study["rmsd"])
 
-    # inverse_fold(args)
-    # esmfold(args)
+    inverse_fold(args)
+    esmfold(args)
     compute_metrics(args)
 
 # Example command:
